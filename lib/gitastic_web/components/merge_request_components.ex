@@ -193,6 +193,45 @@ defmodule GitasticWeb.MergeRequestComponents do
   def count(1, word), do: "1 #{word}"
   def count(n, word), do: "#{n} #{word}s"
 
+  attr :check, :any, required: true, doc: "{sha, status} from Checks.for_merge_request/2, or nil"
+  attr :link, :boolean, default: true, doc: "false inside something that is a link already"
+
+  @doc "A merged merge request's check as a pill: green passed, red failed, yellow running."
+  def checks_pill(%{check: nil} = assigns), do: ~H""
+  def checks_pill(%{check: {_sha, :none}} = assigns), do: ~H""
+
+  def checks_pill(assigns) do
+    {sha, status} = assigns.check
+    short = String.slice(sha, 0, 7)
+
+    {mark, tone, title} =
+      case status do
+        %{ok: true} -> {"✓", "bg-(--ok-bg) text-(--ok-text)", "Checks passed on #{short}"}
+        %{ok: false} -> {"✗", "bg-(--bad-bg) text-(--bad-text)", "Checks failed on #{short}"}
+        _ -> {"●", "bg-(--warn-bg) text-(--warn-text)", "Checks running on #{short}"}
+      end
+
+    assigns = assign(assigns, sha: sha, mark: mark, tone: tone, title: title)
+
+    ~H"""
+    <.link
+      :if={@link}
+      navigate={"/checks/" <> @sha}
+      title={@title}
+      class={["checks-pill shrink-0 rounded-full px-2 py-0.5 text-xs font-medium", @tone]}
+    >
+      {@mark} Checks
+    </.link>
+    <span
+      :if={!@link}
+      title={@title}
+      class={["checks-pill shrink-0 rounded-full px-2 py-0.5 text-xs font-medium", @tone]}
+    >
+      {@mark} Checks
+    </span>
+    """
+  end
+
   attr :sha, :string, required: true
   attr :status, :any, required: true, doc: "Gitastic.Checks.status/1, or :off"
   attr :lead, :string, default: nil, doc: "what comes before, e.g. \"main at\""

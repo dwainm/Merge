@@ -36,7 +36,7 @@ defmodule GitasticWeb.HomeLive do
   def handle_info({:drift, drift}, socket),
     do: {:noreply, socket |> assign(drift: drift) |> load_checks()}
 
-  def handle_info({:checks, _sha}, socket), do: {:noreply, load_checks(socket)}
+  def handle_info({:checks, _sha}, socket), do: {:noreply, socket |> load_checks() |> load()}
 
   def handle_info(:hide_push, socket) do
     case socket.assigns.last_push do
@@ -116,7 +116,9 @@ defmodule GitasticWeb.HomeLive do
 
   defp load(socket) do
     {done, open} = Enum.split_with(MergeRequest.list(), &MergeRequest.done?/1)
-    assign(socket, open: open, done: done)
+    main = socket.assigns[:drift][:main]
+    pills = Map.new(done, &{&1.branch, Checks.for_merge_request(&1, main)})
+    assign(socket, open: open, done: done, pills: pills)
   end
 
   # The confirmation lists what goes out, and what was checked.
@@ -173,7 +175,7 @@ defmodule GitasticWeb.HomeLive do
 
       <section :if={@done != []} class="mt-8">
         <h2 class="mb-3 text-sm font-semibold text-(--text-muted)">Merged and closed</h2>
-        <.mr_list id="done-merge-requests" merge_requests={@done} />
+        <.mr_list id="done-merge-requests" merge_requests={@done} pills={@pills} />
       </section>
     </Layouts.app>
     """
@@ -335,6 +337,7 @@ defmodule GitasticWeb.HomeLive do
 
   attr :id, :string, required: true
   attr :merge_requests, :list, required: true
+  attr :pills, :map, default: %{}
 
   defp mr_list(assigns) do
     ~H"""
@@ -349,7 +352,10 @@ defmodule GitasticWeb.HomeLive do
         >
           <div class="flex items-start justify-between gap-3">
             <span class="font-medium text-(--text)">{mr.title}</span>
-            <.status status={mr.status} merged={mr.merged} />
+            <div class="flex shrink-0 items-center gap-1.5">
+              <.checks_pill check={@pills[mr.branch]} link={false} />
+              <.status status={mr.status} merged={mr.merged} />
+            </div>
           </div>
           <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-(--text-muted)">
             <span class="font-mono">{mr.branch} → {mr.base}</span>

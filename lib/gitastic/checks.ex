@@ -33,6 +33,25 @@ defmodule Gitastic.Checks do
   @doc "`:none`, `{:running, started_at}`, `{:queued, nil}` or the result for `sha`."
   def status(sha, server \\ __MODULE__), do: GenServer.call(server, {:status, sha})
 
+  @doc """
+  The check that speaks for a merged merge request, as `{sha, status}`: its
+  merge commit's own result; else, while it isn't pushed yet, the check of
+  main's tip (`main`), which contains it. nil when there's neither, or no checks.
+  """
+  def for_merge_request(mr, main, server \\ __MODULE__)
+
+  def for_merge_request(%{merged: %{sha: sha} = merged}, main, server) do
+    if Process.whereis(server) && enabled?(server) do
+      case status(sha, server) do
+        %{} = result -> {sha, result}
+        _ when not merged.pushed and is_binary(main) -> {main, status(main, server)}
+        _ -> nil
+      end
+    end
+  end
+
+  def for_merge_request(_mr, _main, _server), do: nil
+
   @doc "The whole log of `sha`'s run so far, or nil."
   def log(sha, server \\ __MODULE__), do: GenServer.call(server, {:log, sha})
 

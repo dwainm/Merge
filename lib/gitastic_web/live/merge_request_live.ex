@@ -171,7 +171,9 @@ defmodule GitasticWeb.MergeRequestLive do
   end
 
   # Once merged, where main's checks stand, so the stream knows its merge is safe.
-  defp main_checks(%{assigns: %{mr: %{merged: %{}}}} = socket) do
+  defp main_checks(%{assigns: %{mr: %{merged: %{}} = mr}} = socket) do
+    socket = assign(socket, pill: Checks.for_merge_request(mr, Drift.current()[:main]))
+
     with %{main: main} <- Drift.current(),
          pid when is_pid(pid) <- Process.whereis(Checks),
          true <- Checks.enabled?() do
@@ -181,7 +183,7 @@ defmodule GitasticWeb.MergeRequestLive do
     end
   end
 
-  defp main_checks(socket), do: assign(socket, main_checks: nil)
+  defp main_checks(socket), do: assign(socket, main_checks: nil, pill: nil)
 
   # The conversation, in order: comments, decisions and addressed commits.
   defp timeline(mr) do
@@ -212,7 +214,10 @@ defmodule GitasticWeb.MergeRequestLive do
       <header id="mr-header" class="mb-4">
         <div class="flex items-start justify-between gap-3">
           <h1 class="text-lg font-semibold leading-snug">{@mr.title}</h1>
-          <.status status={@mr.status} merged={@mr.merged} />
+          <div class="flex shrink-0 items-center gap-1.5">
+            <.checks_pill check={@pill} />
+            <.status status={@mr.status} merged={@mr.merged} />
+          </div>
         </div>
         <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-(--text-muted)">
           <span class="font-mono">{@mr.branch} → {@mr.base}</span>

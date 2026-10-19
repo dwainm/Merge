@@ -65,6 +65,29 @@ defmodule Gitastic.ChecksTest do
     assert :none = Checks.status(second, server)
   end
 
+  test "the check a merged merge request shows: its own merge commit's, else main's while not pushed",
+       c do
+    server = checks(c, "true")
+    Checks.want(c.repo, c.sha, server)
+    assert %{ok: true} = finished(server, c.sha)
+    tip = GitRepo.commit!(c.repo, %{"a" => "a"}, "Later merge")
+
+    # Its merge commit was checked: that result.
+    own = %{merged: %{sha: c.sha, pushed: true}}
+    assert {sha, %{ok: true}} = Checks.for_merge_request(own, tip, server)
+    assert sha == c.sha
+
+    # Merged in the same batch, not checked itself, not pushed: main's tip speaks for it.
+    batch = %{merged: %{sha: "0000000", pushed: false}}
+    assert {^tip, :none} = Checks.for_merge_request(batch, tip, server)
+
+    # Long on origin with no result of its own: no pill.
+    assert nil ==
+             Checks.for_merge_request(%{merged: %{sha: "0000000", pushed: true}}, tip, server)
+
+    assert nil == Checks.for_merge_request(%{merged: nil}, tip, server)
+  end
+
   test "without a command there are no checks", c do
     server = checks(c, nil)
     refute Checks.enabled?(server)
