@@ -116,8 +116,17 @@ defmodule Gitastic.CLI do
             _ -> ""
           end
 
+        flags =
+          [
+            mr["merges"] == "conflicts" && "CONFLICTS (#{Enum.join(mr["conflicts"], ", ")})",
+            mr["branch_state"] == "rewritten" && "REWRITTEN",
+            mr["branch_state"] == "gone" && "BRANCH GONE"
+          ]
+          |> Enum.filter(& &1)
+          |> Enum.map_join(&("  " <> &1))
+
         IO.puts(
-          "#{mr["branch"]}  #{state(mr["status"])}#{merged}  #{mr["title"]}  (#{waiting})  #{mr["url"]}"
+          "#{mr["branch"]}  #{state(mr["status"])}#{merged}#{flags}  #{mr["title"]}  (#{waiting})  #{mr["url"]}"
         )
       end
 

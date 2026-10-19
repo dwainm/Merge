@@ -94,6 +94,9 @@ defmodule GitasticWeb.ApiController do
       agents: mr.agents,
       waiting: mr.waiting,
       merged: mr.merged,
+      merges: merges(mr[:merge_check]),
+      conflicts: conflicts(mr[:merge_check]),
+      branch_state: branch_state(mr[:branch_state]),
       commits: length(mr.commits),
       files: length(mr.files),
       comments: length(mr.comments),
@@ -101,6 +104,17 @@ defmodule GitasticWeb.ApiController do
       local_url: GitasticWeb.mr_url(mr.branch, :local)
     }
   end
+
+  defp merges(%{result: :clean}), do: "clean"
+  defp merges(%{result: {:conflicts, _}}), do: "conflicts"
+  defp merges(_), do: nil
+
+  defp conflicts(%{result: {:conflicts, files}}), do: files
+  defp conflicts(_), do: []
+
+  defp branch_state({:rewritten, _}), do: "rewritten"
+  defp branch_state(:gone), do: "gone"
+  defp branch_state(_), do: "ok"
 
   defp not_found(conn, branch), do: error(conn, 404, "No open merge request for #{branch}.")
 

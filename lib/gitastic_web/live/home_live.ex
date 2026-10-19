@@ -353,6 +353,7 @@ defmodule GitasticWeb.HomeLive do
           <div class="flex items-start justify-between gap-3">
             <span class="font-medium text-(--text)">{mr.title}</span>
             <div class="flex shrink-0 items-center gap-1.5">
+              <.merge_pill :if={not MergeRequest.done?(mr)} mr={mr} />
               <.checks_pill check={@pills[mr.branch]} link={false} />
               <.status status={mr.status} merged={mr.merged} />
             </div>

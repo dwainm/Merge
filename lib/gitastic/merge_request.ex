@@ -17,6 +17,13 @@ defmodule Gitastic.MergeRequest do
   answers at once with whatever is past the agent's cursor, or blocks until
   there is some, so nothing said while an agent re-arms its wait is missed.
 
+  The branch is watched (`check_branch/1`, every minute from `Gitastic.Watcher`):
+  new commits refresh the diff by themselves; a branch that was rewritten
+  (its reviewed head no longer in it) or deleted is flagged in `branch_state`.
+  Each new head, and each new tip of main, gets a trial merge into main
+  (`merge_check`): clean, or the files that conflict. Both fields are read with
+  `Map.get`, so merge requests from before them keep working.
+
   Merging is read from git: once the branch head is on local `main` the merge
   request is `:merged`, with the merge commit in `merged` (`pushed: false`
   until that commit is on `origin/main` too). `merged/2` marks it when the
@@ -50,6 +57,8 @@ defmodule Gitastic.MergeRequest do
     :done_at,
     :merged,
     :git_dir,
+    :merge_check,
+    branch_state: :ok,
     status: :open,
     agents: [],
     comments: [],
@@ -197,6 +206,9 @@ defmodule Gitastic.MergeRequest do
   """
   def merged(branch, commit \\ nil), do: call(branch, {:merged, commit, :manual})
 
+  @doc "Looks at the branch again: new commits, a rewrite or a deletion, and whether it merges cleanly."
+  def check_branch(branch), do: call(branch, :check_branch)
+
   @doc "Marks it merged if git says it is, and notes when the merge reaches origin/main."
   def check_merged(branch), do: call(branch, {:merged, nil, :auto})
 
@@ -251,6 +263,7 @@ defmodule Gitastic.MergeRequest do
           git_dir: Git.common_dir(repo)
         }
         |> refresh()
+        |> merge_check()
 
       Gitastic.Store.put(saved(state))
       broadcast_list()
@@ -314,6 +327,34 @@ defmodule Gitastic.MergeRequest do
             {:reply, {:error, message}, state}
         end
     end
+  end
+
+  def handle_call(:check_branch, _from, %{status: status} = state)
+      when status in [:merged, :closed],
+      do: {:reply, :ok, state}
+
+  def handle_call(:check_branch, _from, state) do
+    repo = git_repo(state)
+
+    next =
+      case Git.rev_parse(repo, state.branch) do
+        {:error, _} ->
+          # Gone: keep the last diff seen.
+          Map.put(state, :branch_state, :gone)
+
+        {:ok, head} when head == state.head ->
+          state |> Map.put(:branch_state, :ok) |> merge_check()
+
+        {:ok, head} ->
+          moved =
+            if Git.ancestor?(repo, state.head, head),
+              do: :ok,
+              else: {:rewritten, String.slice(state.head, 0, 7)}
+
+          state |> refresh() |> Map.put(:branch_state, moved) |> merge_check()
+      end
+
+    if next == state, do: {:reply, :ok, state}, else: {:reply, :ok, changed(next)}
   end
 
   def handle_call(:close, _from, %{status: status} = state) when status in [:merged, :closed] do
@@ -399,7 +440,12 @@ defmodule Gitastic.MergeRequest do
         at: DateTime.utc_now()
       }
 
-      state = %{state | addressed: state.addressed ++ [entry], status: :open} |> refresh()
+      state =
+        %{state | addressed: state.addressed ++ [entry], status: :open}
+        |> refresh()
+        |> Map.put(:branch_state, :ok)
+        |> merge_check()
+
       {:reply, {:ok, entry}, changed(state)}
     else
       {:error, :not_on_branch} ->
@@ -611,6 +657,36 @@ defmodule Gitastic.MergeRequest do
       end
 
     %{state | head: head, merge_base: merge_base, commits: commits, files: files}
+  end
+
+  # A trial merge of the branch into main (local main, where merges happen),
+  # done again only when the branch head or main's tip has moved.
+  defp merge_check(state) do
+    repo = git_repo(state)
+    target = if match?({:ok, _}, Git.rev_parse(repo, "main")), do: "main", else: state.base
+
+    with {:ok, target_sha} <- Git.rev_parse(repo, target) do
+      case Map.get(state, :merge_check) do
+        %{target: ^target_sha, head: head} when head == state.head ->
+          state
+
+        _ ->
+          case Git.merge_check(repo, target_sha, state.head) do
+            {:error, _} ->
+              state
+
+            result ->
+              Map.put(state, :merge_check, %{
+                into: target,
+                target: target_sha,
+                head: state.head,
+                result: result
+              })
+          end
+      end
+    else
+      _ -> state
+    end
   end
 
   # What is written to disk: everything but the waiting agents.

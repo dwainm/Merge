@@ -215,6 +215,7 @@ defmodule GitasticWeb.MergeRequestLive do
         <div class="flex items-start justify-between gap-3">
           <h1 class="text-lg font-semibold leading-snug">{@mr.title}</h1>
           <div class="flex shrink-0 items-center gap-1.5">
+            <.merge_pill :if={not MergeRequest.done?(@mr)} mr={@mr} />
             <.checks_pill check={@pill} />
             <.status status={@mr.status} merged={@mr.merged} />
           </div>
@@ -350,6 +351,39 @@ defmodule GitasticWeb.MergeRequestLive do
           }
         </script>
       </header>
+
+      <div
+        :if={not MergeRequest.done?(@mr) and match?(%{result: {:conflicts, _}}, @mr[:merge_check])}
+        id="conflicts-banner"
+        class="mb-4 rounded-lg border border-(--bad-border) bg-(--bad-bg) px-3 py-2 text-sm text-(--bad-text)"
+      >
+        <p class="font-medium">
+          Conflicts with {@mr.merge_check.into}: this branch won't merge cleanly.
+        </p>
+        <ul class="mt-1 font-mono text-xs">
+          <li :for={file <- elem(@mr.merge_check.result, 1)}>{file}</li>
+        </ul>
+        <p class="mt-1 text-xs">Merge main into the branch (or rebase it) and resolve these.</p>
+      </div>
+
+      <div
+        :if={not MergeRequest.done?(@mr) and @mr[:branch_state] == :gone}
+        id="branch-gone-banner"
+        class="mb-4 rounded-lg border border-(--bad-border) bg-(--bad-bg) px-3 py-2 text-sm text-(--bad-text)"
+      >
+        The branch <span class="font-mono">{@mr.branch}</span>
+        no longer exists. This is the last diff that was seen.
+      </div>
+
+      <div
+        :if={not MergeRequest.done?(@mr) and match?({:rewritten, _}, @mr[:branch_state])}
+        id="rewritten-banner"
+        class="mb-4 rounded-lg border border-(--warn-border) bg-(--warn-bg) px-3 py-2 text-sm text-(--warn-text)"
+      >
+        The branch was rewritten: what was reviewed at
+        <span class="font-mono">{elem(@mr.branch_state, 1)}</span>
+        is no longer in it. The diff shows the branch as it is now; earlier comments may point at lines that moved.
+      </div>
 
       <div
         :if={MergeRequest.done?(@mr)}

@@ -193,6 +193,51 @@ defmodule GitasticWeb.MergeRequestComponents do
   def count(1, word), do: "1 #{word}"
   def count(n, word), do: "#{n} #{word}s"
 
+  attr :mr, :map, required: true
+
+  @doc "Whether an open merge request merges into main cleanly; also a rewritten or deleted branch."
+  def merge_pill(assigns) do
+    assigns =
+      assign(assigns,
+        check: assigns.mr[:merge_check],
+        branch_state: assigns.mr[:branch_state]
+      )
+
+    ~H"""
+    <span
+      :if={@branch_state == :gone}
+      title="The branch no longer exists"
+      class="shrink-0 rounded-full bg-(--bad-bg) px-2 py-0.5 text-xs font-medium text-(--bad-text)"
+    >
+      Branch gone
+    </span>
+    <span
+      :if={match?({:rewritten, _}, @branch_state)}
+      title="The branch was rewritten: what was reviewed is no longer in it"
+      class="shrink-0 rounded-full bg-(--warn-bg) px-2 py-0.5 text-xs font-medium text-(--warn-text)"
+    >
+      Rewritten
+    </span>
+    <%= case @check do %>
+      <% %{result: :clean, into: into} -> %>
+        <span
+          title={"Merges into #{into} without conflicts"}
+          class="merge-pill shrink-0 rounded-full bg-(--ok-bg) px-2 py-0.5 text-xs font-medium text-(--ok-text)"
+        >
+          Merges cleanly
+        </span>
+      <% %{result: {:conflicts, files}, into: into} -> %>
+        <span
+          title={"Conflicts with #{into} in " <> Enum.join(files, ", ")}
+          class="merge-pill shrink-0 rounded-full bg-(--bad-bg) px-2 py-0.5 text-xs font-medium text-(--bad-text)"
+        >
+          Conflicts
+        </span>
+      <% _ -> %>
+    <% end %>
+    """
+  end
+
   attr :check, :any, required: true, doc: "{sha, status} from Checks.for_merge_request/2, or nil"
   attr :link, :boolean, default: true, doc: "false inside something that is a link already"
 

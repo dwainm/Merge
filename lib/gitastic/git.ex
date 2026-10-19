@@ -128,6 +128,34 @@ defmodule Gitastic.Git do
     end
   end
 
+  @doc """
+  Whether `head` merges into `target` without conflicts, by a trial merge that
+  touches no worktree (`git merge-tree`): `:clean` or `{:conflicts, files}`.
+  """
+  def merge_check(repo, target, head) do
+    args = [
+      "-C",
+      repo,
+      "merge-tree",
+      "--write-tree",
+      "--name-only",
+      "--no-messages",
+      target,
+      head
+    ]
+
+    case System.cmd("git", args, stderr_to_stdout: true) do
+      {_, 0} ->
+        :clean
+
+      {out, 1} ->
+        {:conflicts, out |> String.split("\n", trim: true) |> Enum.drop(1) |> Enum.uniq()}
+
+      {out, _} ->
+        {:error, String.trim(out)}
+    end
+  end
+
   @doc "Pushes local `branch` to origin. Answers git's output either way."
   def push(repo, branch), do: git(repo, ["push", "origin", branch])
 

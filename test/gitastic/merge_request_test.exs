@@ -220,6 +220,48 @@ defmodule Gitastic.MergeRequestTest do
     assert Gitastic.Git.enclosing_repo(worktree) == Path.join(repo, ".git")
   end
 
+  test "the branch is watched: new commits show without addressed, and it merges cleanly", c do
+    assert {:ok, %{merge_check: %{result: :clean, into: "main"}}} = MergeRequest.get(c.branch)
+
+    sha = GitRepo.commit!(c.repo, %{"README.md" => "# App\n"}, "Add a readme")
+    assert :ok = MergeRequest.check_branch(c.branch)
+
+    assert {:ok, %{head: ^sha, branch_state: :ok, commits: [%{sha: ^sha} | _]} = mr} =
+             MergeRequest.get(c.branch)
+
+    assert Enum.any?(mr.files, &(&1.path == "README.md"))
+    assert %{result: :clean, head: ^sha} = mr.merge_check
+  end
+
+  test "when main moves under it, a conflict is found and named", c do
+    GitRepo.git!(c.repo, ["checkout", "-q", "main"])
+
+    GitRepo.commit!(
+      c.repo,
+      %{"lib/app.ex" => "defmodule App do\n  def hi, do: 1\nend\n"},
+      "Main too"
+    )
+
+    assert :ok = MergeRequest.check_branch(c.branch)
+
+    assert {:ok, %{merge_check: %{result: {:conflicts, ["lib/app.ex"]}}}} =
+             MergeRequest.get(c.branch)
+  end
+
+  test "a rewritten branch and a deleted one are flagged", c do
+    {:ok, %{head: reviewed}} = MergeRequest.get(c.branch)
+    GitRepo.git!(c.repo, ["reset", "-q", "--hard", "main"])
+    GitRepo.commit!(c.repo, %{"OTHER.md" => "x\n"}, "Something else")
+    assert :ok = MergeRequest.check_branch(c.branch)
+    assert {:ok, %{branch_state: {:rewritten, short}}} = MergeRequest.get(c.branch)
+    assert short == String.slice(reviewed, 0, 7)
+
+    GitRepo.git!(c.repo, ["checkout", "-q", "main"])
+    GitRepo.git!(c.repo, ["branch", "-q", "-D", c.branch])
+    assert :ok = MergeRequest.check_branch(c.branch)
+    assert {:ok, %{branch_state: :gone, files: [_ | _]}} = MergeRequest.get(c.branch)
+  end
+
   defp wait_for_waiters(branch, n) do
     case MergeRequest.get(branch) do
       {:ok, %{waiting: waiting}} when length(waiting) == n -> :ok

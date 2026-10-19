@@ -45,7 +45,11 @@ defmodule Gitastic.Watcher do
     |> Enum.each(&Git.fetch/1)
 
     with %{repo: repo, main: main} <- Drift.refresh(), do: Gitastic.Checks.want(repo, main)
-    Enum.each(mrs, &MergeRequest.check_merged(&1.branch))
+
+    Enum.each(mrs, fn mr ->
+      MergeRequest.check_branch(mr.branch)
+      MergeRequest.check_merged(mr.branch)
+    end)
   end
 
   # Worktrees of one repo share a fetch.
