@@ -223,9 +223,126 @@ defmodule GitasticWeb.MergeRequestLive do
             </span>
           </span>
         </div>
-        <div :if={@mr.body != ""} id="mr-body" class="markdown mt-3 max-w-3xl text-sm text-(--text-2)">
+        <div
+          :if={@mr.body != ""}
+          id="mr-body"
+          phx-hook=".Lightbox"
+          class="markdown mt-3 max-w-3xl text-sm text-(--text-2)"
+        >
           {Phoenix.HTML.raw(Gitastic.Body.to_html(@mr.body))}
         </div>
+        <script :type={Phoenix.LiveView.ColocatedHook} name=".Lightbox">
+          // Screenshots in the body open in an overlay: tap to zoom to full size
+          // where you tapped (and pan), tap again to fit; arrows, keys or a swipe
+          // go between them; Esc, ✕ or a tap beside the image closes it.
+          export default {
+            mounted() {
+              this.onClick = (e) => {
+                const img = e.target.closest("img")
+                if (!img || !this.el.contains(img)) return
+                e.preventDefault()
+                const imgs = [...this.el.querySelectorAll("img")]
+                this.open(imgs, imgs.indexOf(img))
+              }
+              this.el.addEventListener("click", this.onClick)
+            },
+            destroyed() {
+              this.el.removeEventListener("click", this.onClick)
+              this.close()
+            },
+            open(imgs, i) {
+              this.close()
+              const o = document.createElement("div")
+              o.id = "lightbox"
+              o.className = "lightbox"
+              o.setAttribute("role", "dialog")
+              o.setAttribute("aria-modal", "true")
+              o.innerHTML = `
+                <div class="lightbox-bar">
+                  <span class="lightbox-name"></span>
+                  <a class="lightbox-open" target="_blank" rel="noopener">Original</a>
+                  <button type="button" class="lightbox-close" aria-label="Close">✕</button>
+                </div>
+                <div class="lightbox-stage"><img alt=""></div>
+                <button type="button" class="lightbox-prev" aria-label="Previous">‹</button>
+                <button type="button" class="lightbox-next" aria-label="Next">›</button>`
+              document.body.appendChild(o)
+              document.body.style.overflow = "hidden"
+              this.overlay = o
+              this.imgs = imgs
+              const stage = o.querySelector(".lightbox-stage")
+              stage.querySelector("img").addEventListener("click", (e) => {
+                e.stopPropagation()
+                this.toggleZoom(e)
+              })
+              stage.addEventListener("click", (e) => {
+                if (e.target === stage && !o.classList.contains("zoomed")) this.close()
+              })
+              o.querySelector(".lightbox-close").onclick = () => this.close()
+              o.querySelector(".lightbox-prev").onclick = () => this.show(this.i - 1)
+              o.querySelector(".lightbox-next").onclick = () => this.show(this.i + 1)
+              this.onKey = (e) => {
+                if (e.key === "Escape") this.close()
+                if (e.key === "ArrowLeft") this.show(this.i - 1)
+                if (e.key === "ArrowRight") this.show(this.i + 1)
+              }
+              document.addEventListener("keydown", this.onKey)
+              let x0 = null
+              stage.addEventListener("touchstart", (e) => {
+                x0 = e.touches.length === 1 ? e.touches[0].clientX : null
+              }, {passive: true})
+              stage.addEventListener("touchend", (e) => {
+                if (x0 === null || o.classList.contains("zoomed")) return
+                const dx = e.changedTouches[0].clientX - x0
+                x0 = null
+                if (Math.abs(dx) > 60) this.show(this.i + (dx < 0 ? 1 : -1))
+              })
+              this.show(i)
+            },
+            show(i) {
+              const n = this.imgs.length
+              this.i = (i + n) % n
+              const from = this.imgs[this.i]
+              const o = this.overlay
+              const big = o.querySelector(".lightbox-stage img")
+              o.classList.remove("zoomed")
+              big.style.width = ""
+              big.src = from.currentSrc || from.src
+              big.alt = from.alt
+              o.querySelector(".lightbox-name").textContent =
+                n > 1 ? `${from.alt}  ${this.i + 1}/${n}` : from.alt
+              o.querySelector(".lightbox-open").href = from.src
+              o.querySelectorAll(".lightbox-prev, .lightbox-next").forEach((b) => (b.hidden = n < 2))
+            },
+            toggleZoom(e) {
+              const o = this.overlay
+              const stage = o.querySelector(".lightbox-stage")
+              const big = stage.querySelector("img")
+              if (o.classList.contains("zoomed")) {
+                o.classList.remove("zoomed")
+                big.style.width = ""
+                return
+              }
+              const r = big.getBoundingClientRect()
+              const fx = (e.clientX - r.left) / r.width
+              const fy = (e.clientY - r.top) / r.height
+              // Full size, and at least twice what fits, so small images zoom too.
+              big.style.width = `${Math.max(big.naturalWidth, r.width * 2)}px`
+              o.classList.add("zoomed")
+              requestAnimationFrame(() => {
+                stage.scrollLeft = fx * stage.scrollWidth - stage.clientWidth / 2
+                stage.scrollTop = fy * stage.scrollHeight - stage.clientHeight / 2
+              })
+            },
+            close() {
+              if (!this.overlay) return
+              this.overlay.remove()
+              this.overlay = null
+              document.body.style.overflow = ""
+              document.removeEventListener("keydown", this.onKey)
+            }
+          }
+        </script>
       </header>
 
       <div
