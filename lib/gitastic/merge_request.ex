@@ -1,9 +1,11 @@
 defmodule Gitastic.MergeRequest do
   @moduledoc """
   One process per merge request, registered by branch. It holds everything
-  about the merge request (there is no database): the branch and base, title,
-  body, who opened it, the comments, the decisions, what was addressed, the
-  commits and the current diff, and the agents waiting to hear a decision.
+  about the merge request: the branch and base, title, body, who opened it, the
+  comments, the decisions, what was addressed, the commits and the current diff,
+  and the agents waiting to hear a decision. Every change is also written to
+  disk (`Gitastic.Store`), and `restore_all/0` brings them back after a restart;
+  waiting agents are not kept, their `wait` asks again.
 
   The review goes in rounds. A comment belongs to the round it was written in
   (the number of decisions before it); a decision closes its round and tells
@@ -80,8 +82,23 @@ defmodule Gitastic.MergeRequest do
     end
   end
 
+  def start_link({:restore, state}) do
+    GenServer.start_link(__MODULE__, {:restore, state}, name: via(state.branch))
+  end
+
   def start_link(attrs) do
     GenServer.start_link(__MODULE__, attrs, name: via(attrs.branch))
+  end
+
+  @doc "Starts a process for every stored merge request that isn't running. Returns how many."
+  def restore_all do
+    Gitastic.Store.all()
+    |> Enum.count(fn state ->
+      match?(
+        {:ok, _},
+        DynamicSupervisor.start_child(Gitastic.MergeRequests, {__MODULE__, {:restore, state}})
+      )
+    end)
   end
 
   @doc "Every merge request: the open ones oldest first, then the done ones, latest first."
@@ -168,6 +185,11 @@ defmodule Gitastic.MergeRequest do
   ## Server
 
   @impl true
+  def init({:restore, saved}) do
+    # Fields added since it was saved take their defaults.
+    {:ok, struct(__MODULE__, Map.put(saved, :waiters, %{}))}
+  end
+
   def init(attrs) do
     repo = Path.expand(attrs[:repo] || File.cwd!())
     base = blank_to_nil(attrs[:base]) || Git.default_base(repo)
@@ -190,6 +212,7 @@ defmodule Gitastic.MergeRequest do
         }
         |> refresh()
 
+      Gitastic.Store.put(saved(state))
       broadcast_list()
       {:ok, state}
     else
@@ -209,7 +232,9 @@ defmodule Gitastic.MergeRequest do
   end
 
   def handle_call({:register, name}, _from, state) do
-    {:reply, :ok, register(state, name)}
+    state = register(state, name)
+    Gitastic.Store.put(saved(state))
+    {:reply, :ok, state}
   end
 
   def handle_call({:wait, name, _timeout}, _from, %{status: status} = state)
@@ -402,7 +427,11 @@ defmodule Gitastic.MergeRequest do
     %{state | head: head, merge_base: merge_base, commits: commits, files: files}
   end
 
+  # What is written to disk: everything but the waiting agents.
+  defp saved(state), do: state |> Map.from_struct() |> Map.delete(:waiters)
+
   defp changed(state) do
+    Gitastic.Store.put(saved(state))
     broadcast(state)
     state
   end

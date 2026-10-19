@@ -21,7 +21,12 @@ defmodule Gitastic.Application do
     # See https://elixir.hexdocs.pm/Supervisor.html
     # for other strategies and supported options
     opts = [strategy: :one_for_one, name: Gitastic.Supervisor]
-    Supervisor.start_link(children, opts)
+
+    with {:ok, pid} <- Supervisor.start_link(children, opts) do
+      # The merge requests from before the last stop.
+      Gitastic.MergeRequest.restore_all()
+      {:ok, pid}
+    end
   end
 
   # Tell Phoenix to update the endpoint configuration
