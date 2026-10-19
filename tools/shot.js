@@ -2,10 +2,11 @@
 // Screenshots of a gitastic server at desktop and phone width.
 //
 //   NODE_PATH=/root/projects/dwainm.github.io/node_modules \
-//   node tools/shot.js --url http://localhost:PORT --out /tmp/gitastic-shots [--full] /path/one ...
+//   node tools/shot.js --url http://localhost:PORT --out /tmp/gitastic-shots [--full] [--dark] /path/one ...
 //
 // Writes <out>/<path-slug>.desktop.png (1280x800, full page) and <out>/<path-slug>.phone.png
-// (390x844, the viewport; --full for the whole page).
+// (390x844, the viewport; --full for the whole page). --dark sets the system to dark
+// and names the files <slug>.<size>.dark.png.
 const fs = require("fs");
 const path = require("path");
 const puppeteer = require("puppeteer-core");
@@ -17,6 +18,7 @@ for (let i = 0; i < argv.length; i++) {
   if (a === "--url") opt.url = argv[++i];
   else if (a === "--out") opt.out = argv[++i];
   else if (a === "--full") opt.full = true;
+  else if (a === "--dark") opt.dark = true;
   else opt.paths.push(a);
 }
 if (!opt.url || !opt.out || opt.paths.length === 0) {
@@ -42,10 +44,11 @@ const slug = (p) => (p.replace(/^\//, "").replace(/[^a-zA-Z0-9]+/g, "-").replace
     for (const [size, viewport] of Object.entries(viewports)) {
       const page = await browser.newPage();
       await page.setViewport(viewport);
+      if (opt.dark) await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: "dark" }]);
       for (const p of opt.paths) {
         await page.goto(`${base}${p}`, { waitUntil: "networkidle0" });
         await new Promise((r) => setTimeout(r, 400)); // let LiveView connect
-        const file = path.join(opt.out, `${slug(p)}.${size}.png`);
+        const file = path.join(opt.out, `${slug(p)}.${size}${opt.dark ? ".dark" : ""}.png`);
         await page.screenshot({ path: file, fullPage: size === "desktop" || !!opt.full });
         console.log(file);
       }

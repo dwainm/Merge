@@ -76,18 +76,18 @@ defmodule GitasticWeb.HomeLive do
       <div
         :if={@open == []}
         id="no-merge-requests"
-        class="rounded-lg border border-dashed border-zinc-300 bg-white p-6 text-sm text-zinc-500"
+        class="rounded-lg border border-dashed border-(--border) bg-(--surface) p-6 text-sm text-(--text-muted)"
       >
         <p>Nothing to review.</p>
         <p class="mt-2">
-          An agent opens one with <code class="rounded bg-zinc-100 px-1 font-mono text-xs">gitastic mr open &lt;branch&gt;</code>.
+          An agent opens one with <code class="rounded bg-(--surface-2) px-1 font-mono text-xs">gitastic mr open &lt;branch&gt;</code>.
         </p>
       </div>
 
       <.mr_list :if={@open != []} id="merge-requests" merge_requests={@open} />
 
       <section :if={@done != []} class="mt-8">
-        <h2 class="mb-3 text-sm font-semibold text-zinc-500">Merged and closed</h2>
+        <h2 class="mb-3 text-sm font-semibold text-(--text-muted)">Merged and closed</h2>
         <.mr_list id="done-merge-requests" merge_requests={@done} />
       </section>
     </Layouts.app>
@@ -104,7 +104,7 @@ defmodule GitasticWeb.HomeLive do
       <p
         :if={@drift.ahead == [] and @drift.behind == []}
         id="drift-even"
-        class="text-sm text-zinc-500"
+        class="text-sm text-(--text-muted)"
       >
         main is on GitHub (<span class="font-mono">{String.slice(@drift.main, 0, 7)}</span>)
       </p>
@@ -112,19 +112,19 @@ defmodule GitasticWeb.HomeLive do
       <div
         :if={@drift.ahead != []}
         id="drift-ahead"
-        class="rounded-lg border border-amber-200 bg-amber-50 p-3"
+        class="rounded-lg border border-(--warn-border) bg-(--warn-bg) p-3"
       >
         <div class="flex flex-wrap items-center justify-between gap-2">
-          <h2 class="text-sm font-semibold text-amber-900">
+          <h2 class="text-sm font-semibold text-(--warn-text)">
             main is {count(@drift.ahead, "commit")} ahead of GitHub
           </h2>
-          <.link navigate={~p"/drift"} class="text-sm text-amber-900 underline">See the diff</.link>
+          <.link navigate={~p"/drift"} class="text-sm text-(--warn-text) underline">See the diff</.link>
         </div>
         <ol class="mt-2 space-y-1 text-sm">
           <li :for={c <- @drift.ahead} class="flex gap-2">
-            <span class="shrink-0 font-mono text-xs leading-5 text-amber-800">{c.short}</span>
-            <span class="min-w-0 flex-1 text-zinc-800">{c.subject}</span>
-            <span class="shrink-0 text-xs leading-5 text-zinc-500">{ago(c.date)}</span>
+            <span class="shrink-0 font-mono text-xs leading-5 text-(--warn-text)">{c.short}</span>
+            <span class="min-w-0 flex-1 text-(--text)">{c.subject}</span>
+            <span class="shrink-0 text-xs leading-5 text-(--text-muted)">{ago(c.date)}</span>
           </li>
         </ol>
         <button
@@ -132,7 +132,7 @@ defmodule GitasticWeb.HomeLive do
           phx-click="push"
           data-confirm={push_confirm(@drift.ahead)}
           disabled={@busy != nil}
-          class="mt-3 w-full rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700 disabled:opacity-50 sm:w-auto"
+          class="mt-3 w-full rounded-md bg-(--btn-bg) px-4 py-2 text-sm font-medium text-(--btn-text) hover:opacity-90 disabled:opacity-50 sm:w-auto"
         >
           {if @busy == :push, do: "Pushing…", else: "Push"}
         </button>
@@ -141,15 +141,15 @@ defmodule GitasticWeb.HomeLive do
       <div
         :if={@drift.behind != []}
         id="drift-behind"
-        class="rounded-lg border border-sky-200 bg-sky-50 p-3"
+        class="rounded-lg border border-(--info-border) bg-(--info-bg) p-3"
       >
-        <h2 class="text-sm font-semibold text-sky-900">
+        <h2 class="text-sm font-semibold text-(--info-text)">
           GitHub is {count(@drift.behind, "commit")} ahead of main
         </h2>
         <ol class="mt-2 space-y-1 text-sm">
           <li :for={c <- @drift.behind} class="flex gap-2">
-            <span class="shrink-0 font-mono text-xs leading-5 text-sky-800">{c.short}</span>
-            <span class="min-w-0 flex-1 text-zinc-800">{c.subject}</span>
+            <span class="shrink-0 font-mono text-xs leading-5 text-(--info-text)">{c.short}</span>
+            <span class="min-w-0 flex-1 text-(--text)">{c.subject}</span>
           </li>
         </ol>
         <button
@@ -157,7 +157,7 @@ defmodule GitasticWeb.HomeLive do
           phx-click="pull"
           data-confirm={"Pull #{count(@drift.behind, "commit")} from GitHub into main (fast-forward only)?"}
           disabled={@busy != nil}
-          class="mt-3 w-full rounded-md bg-white px-4 py-2 text-sm font-medium text-sky-900 ring-1 ring-sky-300 hover:bg-sky-100 disabled:opacity-50 sm:w-auto"
+          class="mt-3 w-full rounded-md bg-(--surface) px-4 py-2 text-sm font-medium text-(--info-text) ring-1 ring-(--info-border) hover:bg-(--info-bg) disabled:opacity-50 sm:w-auto"
         >
           {if @busy == :pull, do: "Pulling…", else: "Pull"}
         </button>
@@ -167,10 +167,10 @@ defmodule GitasticWeb.HomeLive do
 
       <ul :if={@drift[:ci] not in [nil, []]} id="ci" class="flex flex-wrap gap-x-4 gap-y-1 text-xs">
         <li :for={run <- @drift.ci}>
-          <a href={run["url"]} class="text-zinc-600 hover:underline">
+          <a href={run["url"]} class="text-(--text-2) hover:underline">
             <span class={run_colour(run)}>●</span>
             {run["workflowName"]}: {run["conclusion"] || run["status"]}
-            <span class="font-mono text-zinc-400">{String.slice(run["headSha"], 0, 7)}</span>
+            <span class="font-mono text-(--text-faint)">{String.slice(run["headSha"], 0, 7)}</span>
           </a>
         </li>
       </ul>
@@ -178,12 +178,12 @@ defmodule GitasticWeb.HomeLive do
     """
   end
 
-  defp run_colour(%{"conclusion" => "success"}), do: "text-emerald-600"
+  defp run_colour(%{"conclusion" => "success"}), do: "text-(--ok-text)"
 
   defp run_colour(%{"conclusion" => c}) when c in ["failure", "cancelled", "timed_out"],
-    do: "text-rose-600"
+    do: "text-(--bad-text)"
 
-  defp run_colour(_), do: "text-amber-500"
+  defp run_colour(_), do: "text-(--warn-text)"
 
   attr :result, :map, required: true
 
@@ -193,8 +193,8 @@ defmodule GitasticWeb.HomeLive do
       id="push-result"
       class={[
         "rounded-lg border p-3 text-sm",
-        (@result.ok && "border-emerald-200 bg-emerald-50 text-emerald-900") ||
-          "border-rose-200 bg-rose-50 text-rose-900"
+        (@result.ok && "border-(--ok-border) bg-(--ok-bg) text-(--ok-text)") ||
+          "border-(--bad-border) bg-(--bad-bg) text-(--bad-text)"
       ]}
     >
       <%= if @result.ok do %>
@@ -235,18 +235,18 @@ defmodule GitasticWeb.HomeLive do
     ~H"""
     <ul
       id={@id}
-      class="divide-y divide-zinc-200 overflow-hidden rounded-lg border border-zinc-200 bg-white"
+      class="divide-y divide-(--border) overflow-hidden rounded-lg border border-(--border) bg-(--surface)"
     >
       <li :for={mr <- @merge_requests} id={"mr-#{mr.branch}"}>
         <.link
           navigate={GitasticWeb.mr_path(mr.branch)}
-          class="block px-4 py-3 transition hover:bg-zinc-50"
+          class="block px-4 py-3 transition hover:bg-(--surface-2)"
         >
           <div class="flex items-start justify-between gap-3">
-            <span class="font-medium text-zinc-900">{mr.title}</span>
+            <span class="font-medium text-(--text)">{mr.title}</span>
             <.status status={mr.status} merged={mr.merged} />
           </div>
-          <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-zinc-500">
+          <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-(--text-muted)">
             <span class="font-mono">{mr.branch} → {mr.base}</span>
             <span>{count(mr.commits, "commit")}</span>
             <span>{count(mr.files, "file")}</span>

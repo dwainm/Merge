@@ -10,12 +10,12 @@ defmodule GitasticWeb.MergeRequestComponents do
     ~H"""
     <span class={[
       "shrink-0 rounded-full px-2 py-0.5 text-xs font-medium",
-      @status == :open && "bg-sky-100 text-sky-800",
-      @status == :approved && "bg-emerald-100 text-emerald-800",
-      @status == :needs_work && "bg-amber-100 text-amber-800",
-      @status == :merged && @merged && @merged.pushed && "bg-violet-100 text-violet-800",
-      @status == :merged && !(@merged && @merged.pushed) && "bg-fuchsia-100 text-fuchsia-800",
-      @status == :closed && "bg-zinc-200 text-zinc-700"
+      @status == :open && "bg-(--info-bg) text-(--info-text)",
+      @status == :approved && "bg-(--ok-bg) text-(--ok-text)",
+      @status == :needs_work && "bg-(--warn-bg) text-(--warn-text)",
+      @status == :merged && @merged && @merged.pushed && "bg-(--merged-bg) text-(--merged-text)",
+      @status == :merged && !(@merged && @merged.pushed) && "bg-(--pending-bg) text-(--pending-text)",
+      @status == :closed && "bg-(--surface-2) text-(--text-2)"
     ]}>
       {status_label(@status, @merged)}
     </span>
@@ -57,46 +57,42 @@ defmodule GitasticWeb.MergeRequestComponents do
     <details
       id={"file-#{@index}"}
       open={@open}
-      class="group overflow-hidden rounded-lg border border-zinc-200 bg-white"
+      class="group overflow-hidden rounded-lg border border-(--border) bg-(--surface)"
     >
-      <summary class="flex cursor-pointer list-none items-center gap-2 border-b border-zinc-200 bg-zinc-50 px-3 py-2 text-xs">
-        <span class="text-zinc-400 transition group-open:rotate-90">▸</span>
-        <span class="min-w-0 flex-1 truncate font-mono text-zinc-800" title={@file.path}>
-          <span :if={@file.status == :renamed} class="text-zinc-400">{@file.old_path} → </span>{@file.path}
+      <summary class="flex cursor-pointer list-none items-center gap-2 border-b border-(--border) bg-(--surface-2) px-3 py-2 text-xs">
+        <span class="text-(--text-faint) transition group-open:rotate-90">▸</span>
+        <span class="min-w-0 flex-1 truncate font-mono text-(--text)" title={@file.path}>
+          <span :if={@file.status == :renamed} class="text-(--text-faint)">{@file.old_path} → </span>{@file.path}
         </span>
         <span
           :if={@file.status in [:added, :deleted]}
           class={[
             "rounded px-1 font-medium",
-            @file.status == :added && "bg-emerald-100 text-emerald-800",
-            @file.status == :deleted && "bg-rose-100 text-rose-800"
+            @file.status == :added && "bg-(--ok-bg) text-(--ok-text)",
+            @file.status == :deleted && "bg-(--bad-bg) text-(--bad-text)"
           ]}
         >
           {if @file.status == :added, do: "new", else: "deleted"}
         </span>
-        <span class="font-mono text-emerald-700">+{@file.additions}</span>
-        <span class="font-mono text-rose-700">−{@file.deletions}</span>
+        <span class="font-mono text-(--ok-text)">+{@file.additions}</span>
+        <span class="font-mono text-(--bad-text)">−{@file.deletions}</span>
       </summary>
 
-      <p :if={@file.binary?} class="px-3 py-2 text-xs text-zinc-500">Binary file</p>
+      <p :if={@file.binary?} class="px-3 py-2 text-xs text-(--text-muted)">Binary file</p>
 
       <div :if={@file.hunks != []} class="overflow-x-auto">
-        <table class="hl w-full border-collapse font-mono text-[12px] leading-5">
+        <table class="hl diff w-full border-collapse font-mono text-[12px] leading-5">
           <tbody :for={hunk <- @file.hunks}>
-            <tr class="bg-sky-50 text-zinc-500">
+            <tr class="diff-hunk">
               <td colspan="3" class="whitespace-pre px-3 py-0.5">{hunk.header}</td>
             </tr>
             <%= for line <- hunk.lines do %>
-              <tr class={[
-                line.type == :add && "bg-emerald-50",
-                line.type == :del && "bg-rose-50",
-                line.type == :note && "text-zinc-400"
-              ]}>
+              <tr class={"diff-#{line.type}"}>
                 <td
                   class={[
-                    "w-px select-none whitespace-nowrap px-1.5 text-right align-top text-zinc-400",
+                    "diff-num w-px select-none whitespace-nowrap px-1.5 text-right align-top",
                     @commentable && line.type != :note &&
-                      "cursor-pointer hover:bg-sky-100 hover:text-sky-700"
+                      "diff-pick cursor-pointer"
                   ]}
                   phx-click={@commentable && line.type != :note && "pick"}
                   phx-value-path={@file.path}
@@ -107,9 +103,9 @@ defmodule GitasticWeb.MergeRequestComponents do
                 </td>
                 <td
                   class={[
-                    "w-px select-none whitespace-nowrap border-r border-zinc-100 px-1.5 text-right align-top text-zinc-400",
+                    "diff-num w-px select-none whitespace-nowrap px-1.5 text-right align-top",
                     @commentable && line.type != :note &&
-                      "cursor-pointer hover:bg-sky-100 hover:text-sky-700"
+                      "diff-pick cursor-pointer"
                   ]}
                   phx-click={@commentable && line.type != :note && "pick"}
                   phx-value-path={@file.path}
@@ -119,17 +115,23 @@ defmodule GitasticWeb.MergeRequestComponents do
                   {line.new}
                 </td>
                 <%!-- phx-no-format: whitespace here is the code's own. --%>
-                <td class="whitespace-pre pr-4 pl-2" phx-no-format><span class="select-none text-zinc-400">{marker(line.type)}</span>{code(line)}</td>
+                <td class="diff-code whitespace-pre pr-4" phx-no-format><span class="diff-marker select-none">{marker(line.type)}</span>{code(line)}</td>
               </tr>
               <tr :for={comment <- comments_on(@line_comments, @file.path, line)}>
-                <td colspan="3" class="border-y border-zinc-200 bg-zinc-50 px-3 py-2 font-sans">
+                <td
+                  colspan="3"
+                  class="border-y border-(--border) bg-(--surface-2) px-3 py-2 font-sans"
+                >
                   <div class="sticky left-3 max-w-[calc(100vw-4rem)] lg:max-w-2xl">
                     {render_slot(@comment, comment)}
                   </div>
                 </td>
               </tr>
               <tr :if={@picked && line.type != :note && @picked == line_key(@file.path, line)}>
-                <td colspan="3" class="border-y border-zinc-200 bg-zinc-50 px-3 py-2 font-sans">
+                <td
+                  colspan="3"
+                  class="border-y border-(--border) bg-(--surface-2) px-3 py-2 font-sans"
+                >
                   <div class="sticky left-3 max-w-[calc(100vw-4rem)] lg:max-w-2xl">
                     {render_slot(@comment_form)}
                   </div>
@@ -160,26 +162,26 @@ defmodule GitasticWeb.MergeRequestComponents do
 
   def commit_list(assigns) do
     ~H"""
-    <ol id="commits" class="divide-y divide-zinc-100 text-sm">
+    <ol id="commits" class="divide-y divide-(--border) text-sm">
       <li :for={c <- @commits} id={"commit-#{c.short}"}>
         <.link
           patch={GitasticWeb.mr_path(@branch) <> "?commit=" <> c.sha}
           class={[
-            "block px-3 py-2 transition hover:bg-zinc-50",
-            @selected == c.sha && "bg-sky-50"
+            "block px-3 py-2 transition hover:bg-(--surface-2)",
+            @selected == c.sha && "bg-(--info-bg)"
           ]}
         >
           <div class="flex items-center gap-2">
-            <span class="font-mono text-xs text-sky-700">{c.short}</span>
+            <span class="font-mono text-xs text-(--link)">{c.short}</span>
             <span
               :if={@new_since && MapSet.member?(@new_since, c.sha)}
-              class="rounded bg-amber-100 px-1 text-[10px] font-medium uppercase text-amber-800"
+              class="rounded bg-(--warn-bg) px-1 text-[10px] font-medium uppercase text-(--warn-text)"
             >
               new
             </span>
           </div>
-          <div class="mt-0.5 line-clamp-2 text-zinc-800">{c.subject}</div>
-          <div class="mt-0.5 text-xs text-zinc-400">{c.author} · {ago(c.date)}</div>
+          <div class="mt-0.5 line-clamp-2 text-(--text)">{c.subject}</div>
+          <div class="mt-0.5 text-xs text-(--text-faint)">{c.author} · {ago(c.date)}</div>
         </.link>
       </li>
     </ol>

@@ -178,9 +178,9 @@ defmodule GitasticWeb.MergeRequestLive do
   def render(%{mr: nil} = assigns) do
     ~H"""
     <Layouts.app flash={@flash}>
-      <div id="not-found" class="rounded-lg border border-zinc-200 bg-white p-6 text-sm">
+      <div id="not-found" class="rounded-lg border border-(--border) bg-(--surface) p-6 text-sm">
         <p>No open merge request for <span class="font-mono">{@branch}</span>.</p>
-        <.link navigate={~p"/"} class="mt-3 inline-block text-sky-700">All merge requests</.link>
+        <.link navigate={~p"/"} class="mt-3 inline-block text-(--link)">All merge requests</.link>
       </div>
     </Layouts.app>
     """
@@ -194,17 +194,17 @@ defmodule GitasticWeb.MergeRequestLive do
           <h1 class="text-lg font-semibold leading-snug">{@mr.title}</h1>
           <.status status={@mr.status} merged={@mr.merged} />
         </div>
-        <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-zinc-500">
+        <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-(--text-muted)">
           <span class="font-mono">{@mr.branch} → {@mr.base}</span>
           <span>opened by {@mr.opened_by} {ago(@mr.opened_at)}</span>
           <span id="agents">
             told: {Enum.join(@mr.agents, ", ")}
-            <span :if={@mr.waiting != []} class="text-emerald-700">
+            <span :if={@mr.waiting != []} class="text-(--ok-text)">
               (waiting now: {Enum.join(@mr.waiting, ", ")})
             </span>
           </span>
         </div>
-        <div :if={@mr.body != ""} id="mr-body" class="markdown mt-3 max-w-3xl text-sm text-zinc-700">
+        <div :if={@mr.body != ""} id="mr-body" class="markdown mt-3 max-w-3xl text-sm text-(--text-2)">
           {Phoenix.HTML.raw(Gitastic.Body.to_html(@mr.body))}
         </div>
       </header>
@@ -214,8 +214,8 @@ defmodule GitasticWeb.MergeRequestLive do
         id="done-banner"
         class={[
           "mb-4 rounded-lg px-3 py-2 text-sm",
-          @mr.status == :merged && "bg-violet-50 text-violet-900",
-          @mr.status == :closed && "bg-zinc-100 text-zinc-700"
+          @mr.status == :merged && "bg-(--merged-bg) text-(--merged-text)",
+          @mr.status == :closed && "bg-(--surface-2) text-(--text-2)"
         ]}
       >
         <%= if @mr.merged do %>
@@ -233,7 +233,7 @@ defmodule GitasticWeb.MergeRequestLive do
       <div
         :if={@new_since && MapSet.size(@new_since) > 0 && @view != :since}
         id="since-review"
-        class="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"
+        class="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-(--warn-border) bg-(--warn-bg) px-3 py-2 text-sm text-(--warn-text)"
       >
         <span>
           {count(MapSet.size(@new_since), "new commit")} since your last review.
@@ -249,9 +249,9 @@ defmodule GitasticWeb.MergeRequestLive do
       <div class="flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,1fr)_18rem] lg:items-start lg:gap-5">
         <aside
           id="commits-panel"
-          class="overflow-hidden rounded-lg border border-zinc-200 bg-white lg:sticky lg:top-4 lg:order-last"
+          class="overflow-hidden rounded-lg border border-(--border) bg-(--surface) lg:sticky lg:top-4 lg:order-last"
         >
-          <div class="flex items-center justify-between border-b border-zinc-200 bg-zinc-50 px-3 py-2 text-xs font-medium text-zinc-600">
+          <div class="flex items-center justify-between border-b border-(--border) bg-(--surface-2) px-3 py-2 text-xs font-medium text-(--text-2)">
             <span>{count(@mr.commits, "commit")}, newest first</span>
           </div>
           <div class="max-h-56 overflow-y-auto lg:max-h-[calc(100vh-8rem)]">
@@ -270,8 +270,8 @@ defmodule GitasticWeb.MergeRequestLive do
               patch={GitasticWeb.mr_path(@mr.branch)}
               class={[
                 "rounded-md px-2.5 py-1",
-                (@view == :branch && "bg-zinc-900 text-white") ||
-                  "bg-white text-zinc-700 ring-1 ring-zinc-200"
+                (@view == :branch && "bg-(--btn-bg) text-(--btn-text)") ||
+                  "bg-(--surface) text-(--text-2) ring-1 ring-(--border)"
               ]}
             >
               All changes
@@ -281,8 +281,8 @@ defmodule GitasticWeb.MergeRequestLive do
               patch={GitasticWeb.mr_path(@mr.branch) <> "?since=review"}
               class={[
                 "rounded-md px-2.5 py-1",
-                (@view == :since && "bg-zinc-900 text-white") ||
-                  "bg-white text-zinc-700 ring-1 ring-zinc-200"
+                (@view == :since && "bg-(--btn-bg) text-(--btn-text)") ||
+                  "bg-(--surface) text-(--text-2) ring-1 ring-(--border)"
               ]}
             >
               Since your review
@@ -290,25 +290,25 @@ defmodule GitasticWeb.MergeRequestLive do
             <span
               :if={@selected}
               id="selected-commit"
-              class="flex min-w-0 items-center gap-2 rounded-md bg-sky-100 px-2.5 py-1 text-sky-900"
+              class="flex min-w-0 items-center gap-2 rounded-md bg-(--info-bg) px-2.5 py-1 text-(--info-text)"
             >
               <span class="font-mono text-xs">{@selected.short}</span>
               <span class="truncate">{@selected.subject}</span>
             </span>
-            <span class="ml-auto text-xs text-zinc-500">
+            <span class="ml-auto text-xs text-(--text-muted)">
               {count(@files, "file")} ·
-              <span class="text-emerald-700">+{Enum.sum_by(@files, & &1.additions)}</span>
-              <span class="text-rose-700">−{Enum.sum_by(@files, & &1.deletions)}</span>
+              <span class="text-(--ok-text)">+{Enum.sum_by(@files, & &1.additions)}</span>
+              <span class="text-(--bad-text)">−{Enum.sum_by(@files, & &1.deletions)}</span>
             </span>
           </nav>
 
-          <p :if={@diff_error} class="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-800">
+          <p :if={@diff_error} class="rounded-lg bg-(--bad-bg) px-3 py-2 text-sm text-(--bad-text)">
             {@diff_error}
           </p>
           <p
             :if={!@diff_error && @files == []}
             id="no-changes"
-            class="rounded-lg border border-zinc-200 bg-white px-3 py-4 text-sm text-zinc-500"
+            class="rounded-lg border border-(--border) bg-(--surface) px-3 py-4 text-sm text-(--text-muted)"
           >
             No changes.
           </p>
@@ -337,16 +337,16 @@ defmodule GitasticWeb.MergeRequestLive do
                   rows="3"
                   phx-mounted={JS.focus()}
                   placeholder="Comment on this line"
-                  class="w-full rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-base focus:border-sky-500 sm:text-sm focus:outline-none"
+                  class="w-full rounded-md border border-(--border) bg-(--surface) px-2 py-1.5 text-base focus:border-(--link) sm:text-sm focus:outline-none"
                 >{@line_form[:body].value}</textarea>
                 <div class="flex gap-2">
-                  <button class="rounded-md bg-zinc-900 px-3 py-1.5 text-sm text-white hover:bg-zinc-700">
+                  <button class="rounded-md bg-(--btn-bg) px-3 py-1.5 text-sm text-(--btn-text) hover:opacity-90">
                     Comment
                   </button>
                   <button
                     type="button"
                     phx-click="unpick"
-                    class="rounded-md px-3 py-1.5 text-sm text-zinc-600 hover:bg-zinc-100"
+                    class="rounded-md px-3 py-1.5 text-sm text-(--text-2) hover:bg-(--surface-2)"
                   >
                     Cancel
                   </button>
@@ -358,11 +358,14 @@ defmodule GitasticWeb.MergeRequestLive do
       </div>
 
       <section id="conversation" class="mt-6 max-w-3xl space-y-3">
-        <h2 class="text-sm font-semibold text-zinc-700">Conversation</h2>
+        <h2 class="text-sm font-semibold text-(--text-2)">Conversation</h2>
         <%= for item <- sorted_timeline(@mr) do %>
           <%= case item do %>
             <% {:comment, c} -> %>
-              <div id={"comment-#{c.id}"} class="rounded-lg border border-zinc-200 bg-white px-3 py-2">
+              <div
+                id={"comment-#{c.id}"}
+                class="rounded-lg border border-(--border) bg-(--surface) px-3 py-2"
+              >
                 <.comment comment={c} addressed={[]} show_location />
               </div>
             <% {:decision, d} -> %>
@@ -370,8 +373,8 @@ defmodule GitasticWeb.MergeRequestLive do
                 id={"decision-#{d.round}"}
                 class={[
                   "rounded-lg px-3 py-2 text-sm",
-                  d.verdict == :approved && "bg-emerald-50 text-emerald-900",
-                  d.verdict == :needs_work && "bg-amber-50 text-amber-900"
+                  d.verdict == :approved && "bg-(--ok-bg) text-(--ok-text)",
+                  d.verdict == :needs_work && "bg-(--warn-bg) text-(--warn-text)"
                 ]}
               >
                 <span class="font-medium">
@@ -385,7 +388,7 @@ defmodule GitasticWeb.MergeRequestLive do
             <% {:addressed, a} -> %>
               <div
                 id={"addressed-#{a.short}"}
-                class="rounded-lg bg-sky-50 px-3 py-2 text-sm text-sky-900"
+                class="rounded-lg bg-(--info-bg) px-3 py-2 text-sm text-(--info-text)"
               >
                 <span class="font-medium">{a.by}</span>
                 addressed it in
@@ -413,9 +416,9 @@ defmodule GitasticWeb.MergeRequestLive do
             id="comment-body"
             rows="3"
             placeholder="A general comment"
-            class="w-full rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-base focus:border-sky-500 sm:text-sm focus:outline-none"
+            class="w-full rounded-md border border-(--border) bg-(--surface) px-2 py-1.5 text-base focus:border-(--link) sm:text-sm focus:outline-none"
           >{@comment_form[:body].value}</textarea>
-          <button class="rounded-md bg-white px-3 py-1.5 text-sm ring-1 ring-zinc-300 hover:bg-zinc-50">
+          <button class="rounded-md bg-(--surface) px-3 py-1.5 text-sm ring-1 ring-(--border) hover:bg-(--surface-2)">
             Comment
           </button>
         </.form>
@@ -425,22 +428,22 @@ defmodule GitasticWeb.MergeRequestLive do
           for={@decision_form}
           id="decision-form"
           phx-submit="decide"
-          class="space-y-2 rounded-lg border border-zinc-200 bg-white p-3"
+          class="space-y-2 rounded-lg border border-(--border) bg-(--surface) p-3"
         >
-          <h2 class="text-sm font-semibold text-zinc-700">Decide</h2>
+          <h2 class="text-sm font-semibold text-(--text-2)">Decide</h2>
           <textarea
             name={@decision_form[:body].name}
             id="decision-body"
             rows="2"
             placeholder="A note with the decision (needed to reject)"
-            class="w-full rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-base focus:border-sky-500 sm:text-sm focus:outline-none"
+            class="w-full rounded-md border border-(--border) bg-(--surface) px-2 py-1.5 text-base focus:border-(--link) sm:text-sm focus:outline-none"
           >{@decision_form[:body].value}</textarea>
           <div class="flex gap-2">
             <button
               id="approve-button"
               name="verdict"
               value="approve"
-              class="flex-1 rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 sm:flex-none"
+              class="flex-1 rounded-md bg-(--ok-solid) px-4 py-2 text-sm font-medium text-white hover:opacity-90 sm:flex-none"
             >
               Approve
             </button>
@@ -448,7 +451,7 @@ defmodule GitasticWeb.MergeRequestLive do
               id="reject-button"
               name="verdict"
               value="reject"
-              class="flex-1 rounded-md bg-white px-4 py-2 text-sm font-medium text-rose-700 ring-1 ring-rose-300 hover:bg-rose-50 sm:flex-none"
+              class="flex-1 rounded-md bg-(--surface) px-4 py-2 text-sm font-medium text-(--bad-text) ring-1 ring-(--bad-border) hover:bg-(--bad-bg) sm:flex-none"
             >
               Reject
             </button>
@@ -466,16 +469,16 @@ defmodule GitasticWeb.MergeRequestLive do
   defp comment(assigns) do
     ~H"""
     <div class="text-sm">
-      <div class="flex flex-wrap items-baseline gap-x-2 text-xs text-zinc-500">
-        <span class="font-medium text-zinc-800">{@comment.author}</span>
+      <div class="flex flex-wrap items-baseline gap-x-2 text-xs text-(--text-muted)">
+        <span class="font-medium text-(--text)">{@comment.author}</span>
         <span :if={@show_location && @comment.path} class="font-mono">
           {@comment.path}:{@comment.line}{if @comment.side == "old", do: " (old)"}{if @comment.commit,
             do: " in " <> String.slice(@comment.commit, 0, 7)}
         </span>
         <span>{ago(@comment.at)}</span>
       </div>
-      <p class="mt-0.5 whitespace-pre-wrap text-zinc-800">{@comment.body}</p>
-      <p :for={a <- @addressed} class="mt-1 text-xs text-sky-800">
+      <p class="mt-0.5 whitespace-pre-wrap text-(--text)">{@comment.body}</p>
+      <p :for={a <- @addressed} class="mt-1 text-xs text-(--info-text)">
         ↳ addressed in <span class="font-mono">{a.short}</span>{if a.note, do: ": " <> a.note}
       </p>
     </div>

@@ -35,12 +35,12 @@ defmodule GitasticWeb.Layouts do
 
   def app(assigns) do
     ~H"""
-    <header class="border-b border-zinc-200 bg-white">
+    <header class="border-b border-(--border) bg-(--surface)">
       <div class="mx-auto flex max-w-7xl items-center gap-3 px-4 py-3 lg:px-6">
-        <.link navigate={~p"/"} class="font-mono text-sm font-semibold tracking-tight text-zinc-900">
+        <.link navigate={~p"/"} class="font-mono text-sm font-semibold tracking-tight text-(--text)">
           gitastic
         </.link>
-        <span class="text-xs text-zinc-400">merge requests for agents</span>
+        <span class="text-xs text-(--text-faint)">merge requests for agents</span>
       </div>
     </header>
 

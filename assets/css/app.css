@@ -104,19 +104,125 @@
 
 /* This file is for your main application CSS */
 
+/* The colours, once. GitHub's light palette here, its dark one when the system
+   is dark; every page uses these through bg-(--x) / text-(--x) and the rules below. */
+:root {
+  color-scheme: light;
+  --bg: #f6f8fa;
+  --surface: #ffffff;
+  --surface-2: #f6f8fa;
+  --border: #d1d9e0;
+  --text: #1f2328;
+  --text-2: #393f46;
+  --text-muted: #59636e;
+  --text-faint: #6e7781;
+  --link: #0969da;
+  --btn-bg: #1f2328;
+  --btn-text: #ffffff;
+
+  --info-bg: #ddf4ff;
+  --info-border: #54aeff;
+  --info-text: #0550ae;
+  --ok-bg: #dafbe1;
+  --ok-border: #4ac26b;
+  --ok-text: #116329;
+  --ok-solid: #1f883d;
+  --warn-bg: #fff8c5;
+  --warn-border: #d4a72c;
+  --warn-text: #7d4e00;
+  --bad-bg: #ffebe9;
+  --bad-border: #ff8182;
+  --bad-text: #a40e26;
+  --merged-bg: #fbefff;
+  --merged-text: #6639ba;
+  --pending-bg: #ffeff7;
+  --pending-text: #99286e;
+
+  --diff-add-bg: #dafbe1;
+  --diff-add-num: #aceebb;
+  --diff-del-bg: #ffebe9;
+  --diff-del-num: #ffcecb;
+  --diff-hunk-bg: #ddf4ff;
+  --diff-hunk-num: #b6e3ff;
+  --diff-hunk-text: #59636e;
+  --diff-num-text: #59636e;
+  --diff-num-strong: #1f2328;
+  --diff-marker: #1f2328;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --bg: #0d1117;
+    --surface: #0d1117;
+    --surface-2: #151b23;
+    --border: #3d444d;
+    --text: #f0f6fc;
+    --text-2: #d1d7e0;
+    --text-muted: #9198a1;
+    --text-faint: #858e99;
+    --link: #4493f8;
+    --btn-bg: #f0f6fc;
+    --btn-text: #0d1117;
+
+    --info-bg: #121d2f;
+    --info-border: #1f6feb;
+    --info-text: #79c0ff;
+    --ok-bg: #12261e;
+    --ok-border: #2ea043;
+    --ok-text: #56d364;
+    --ok-solid: #238636;
+    --warn-bg: #272115;
+    --warn-border: #9e6a03;
+    --warn-text: #e3b341;
+    --bad-bg: #25171c;
+    --bad-border: #da3633;
+    --bad-text: #ff7b72;
+    --merged-bg: #231a35;
+    --merged-text: #d2a8ff;
+    --pending-bg: #2b1724;
+    --pending-text: #ff9bce;
+
+    --diff-add-bg: #17301f;
+    --diff-add-num: #1f5130;
+    --diff-del-bg: #3a1d21;
+    --diff-del-num: #6b2a2d;
+    --diff-hunk-bg: #121d2f;
+    --diff-hunk-num: #1a3355;
+    --diff-hunk-text: #9198a1;
+    --diff-num-text: #9198a1;
+    --diff-num-strong: #f0f6fc;
+    --diff-marker: #f0f6fc;
+  }
+}
+
+/* The diff: a full-strength band per changed line, a stronger one behind its
+   line numbers, a solid +/- and code in full-contrast text. */
+.diff { color: var(--text); }
+.diff .diff-num { color: var(--diff-num-text); }
+.diff .diff-code { padding-left: 0.25rem; }
+.diff .diff-marker { display: inline-block; width: 1.25rem; text-align: center; color: var(--diff-marker); }
+.diff .diff-hunk td { background: var(--diff-hunk-bg); color: var(--diff-hunk-text); }
+.diff .diff-add td { background: var(--diff-add-bg); }
+.diff .diff-add .diff-num { background: var(--diff-add-num); color: var(--diff-num-strong); }
+.diff .diff-del td { background: var(--diff-del-bg); }
+.diff .diff-del .diff-num { background: var(--diff-del-num); color: var(--diff-num-strong); }
+.diff .diff-note td { color: var(--text-faint); }
+.diff .diff-pick:hover { background: var(--info-bg); color: var(--link); }
+
 /* A merge request's body, rendered from Markdown (Gitastic.Body). */
 .markdown > * + * { margin-top: 0.6em; }
-.markdown h1, .markdown h2, .markdown h3, .markdown h4 { font-weight: 600; color: var(--color-zinc-900); margin-top: 1em; }
+.markdown h1, .markdown h2, .markdown h3, .markdown h4 { font-weight: 600; color: var(--text); margin-top: 1em; }
 .markdown h1 { font-size: 1.15rem; }
 .markdown h2 { font-size: 1.05rem; }
 .markdown ul { list-style: disc; padding-left: 1.25rem; }
 .markdown ol { list-style: decimal; padding-left: 1.25rem; }
 .markdown li + li { margin-top: 0.2em; }
-.markdown a { color: var(--color-sky-700); text-decoration: underline; }
-.markdown code { font-family: var(--font-mono); font-size: 0.85em; background: var(--color-zinc-100); border-radius: 0.25rem; padding: 0.05em 0.3em; }
-.markdown pre { background: var(--color-zinc-100); border-radius: 0.5rem; padding: 0.6rem 0.75rem; overflow-x: auto; }
+.markdown a { color: var(--link); text-decoration: underline; }
+.markdown code { font-family: var(--font-mono); font-size: 0.85em; background: var(--surface-2); border-radius: 0.25rem; padding: 0.05em 0.3em; }
+.markdown pre { background: var(--surface-2); border-radius: 0.5rem; padding: 0.6rem 0.75rem; overflow-x: auto; }
 .markdown pre code { background: none; padding: 0; }
-.markdown blockquote { border-left: 3px solid var(--color-zinc-300); padding-left: 0.75rem; color: var(--color-zinc-500); }
+.markdown blockquote { border-left: 3px solid var(--border); padding-left: 0.75rem; color: var(--text-muted); }
 .markdown table { border-collapse: collapse; display: block; overflow-x: auto; }
-.markdown th, .markdown td { border: 1px solid var(--color-zinc-200); padding: 0.25rem 0.5rem; text-align: left; }
-.markdown img { max-width: 100%; max-height: 32rem; border: 1px solid var(--color-zinc-200); border-radius: 0.5rem; }
+.markdown th, .markdown td { border: 1px solid var(--border); padding: 0.25rem 0.5rem; text-align: left; }
+.markdown img { max-width: 100%; max-height: 32rem; border: 1px solid var(--border); border-radius: 0.5rem; }

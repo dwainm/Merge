@@ -61,9 +61,16 @@ defmodule Gitastic.Highlight do
   defp add(acc, {_, _, ""}), do: acc
   defp add({lines, current}, token), do: {lines, [token | current]}
 
-  @doc "The CSS for the token classes, under `.hl`, leaving the background to the diff."
+  @doc """
+  The CSS for the token classes, under `.hl`, leaving the background to the
+  diff: a high-contrast light style, and a dark one when the system is dark.
+  """
   def stylesheet do
-    Makeup.stylesheet(Makeup.Styles.HTML.StyleMap.friendly_style(), "hl") <>
-      "\n.hl { background: transparent; }\n"
+    light = Makeup.stylesheet(Makeup.Styles.HTML.StyleMap.vs_style(), "hl")
+    dark = Makeup.stylesheet(Makeup.Styles.HTML.StyleMap.one_dark_style(), "hl")
+
+    light <>
+      "\n@media (prefers-color-scheme: dark) {\n" <>
+      dark <> "\n}\n.hl { background: transparent !important; color: inherit; }\n"
   end
 end
