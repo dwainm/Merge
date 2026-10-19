@@ -31,6 +31,9 @@ defmodule GitasticWeb.Layouts do
     default: nil,
     doc: "the current [scope](https://phoenix.hexdocs.pm/scopes.html)"
 
+  attr :queue, :list, default: nil, doc: "the review queue's tabs, from GitasticWeb.QueueHook"
+  attr :current, :string, default: nil, doc: "the branch on screen, whose tab is marked"
+
   slot :inner_block, required: true
 
   def app(assigns) do
@@ -44,12 +47,95 @@ defmodule GitasticWeb.Layouts do
       </div>
     </header>
 
+    <.queue_tabs :if={@queue not in [nil, []]} tabs={@queue} current={@current} />
+
     <main class="mx-auto max-w-7xl px-4 py-5 lg:px-6">
       {render_slot(@inner_block)}
     </main>
 
     <.flash_group flash={@flash} />
     """
+  end
+
+  attr :tabs, :list, required: true
+  attr :current, :string, default: nil
+
+  # The review queue as tabs: the first still in review is Next; an approved,
+  # merged or closed one fades out over a few seconds and drops away.
+  defp queue_tabs(assigns) do
+    ~H"""
+    <nav id="review-queue" class="border-b border-(--border) bg-(--bg)" aria-label="Review queue">
+      <div class="mx-auto flex max-w-7xl items-end gap-1 overflow-x-auto px-4 pt-2 lg:px-6">
+        <span class="mr-1 shrink-0 self-center pb-2 text-xs font-medium text-(--text-faint)">
+          Queue
+        </span>
+        <div
+          :for={tab <- @tabs}
+          id={"queue-tab-#{tab.branch}"}
+          class={[
+            "group flex max-w-[18rem] shrink-0 items-center rounded-t-lg border border-b-0 text-sm transition-colors",
+            tab.branch == @current && "border-(--border) bg-(--surface) text-(--text)",
+            tab.branch != @current &&
+              "border-transparent text-(--text-muted) hover:bg-(--surface-2) hover:text-(--text)",
+            tab.leaving_at && "queue-leaving"
+          ]}
+          style={leaving_style(tab)}
+        >
+          <.link
+            navigate={GitasticWeb.mr_path(tab.branch)}
+            class="flex min-w-0 items-center gap-2 py-2 pl-3"
+            title={tab.branch}
+          >
+            <span
+              :if={tab.next}
+              class="shrink-0 rounded-full bg-(--info-bg) px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-(--info-text)"
+            >
+              Next
+            </span>
+            <span :if={tab.leaving_at} class="shrink-0 text-xs font-medium text-(--ok-text)">
+              ✓ {GitasticWeb.MergeRequestComponents.status_label(tab.status)}
+            </span>
+            <span class="truncate">{tab.title}</span>
+            <span class="shrink-0 text-xs text-(--text-faint)">
+              {age(tab.added_at)}
+            </span>
+          </.link>
+          <button
+            type="button"
+            id={"queue-remove-#{tab.branch}"}
+            phx-click="queue_remove"
+            phx-value-branch={tab.branch}
+            class="px-2 py-2 text-(--text-faint) opacity-60 transition hover:text-(--text) hover:opacity-100"
+            aria-label={"Take #{tab.title} off the queue"}
+          >
+            ×
+          </button>
+        </div>
+      </div>
+    </nav>
+    """
+  end
+
+  # How long it has been in the queue: 4m, 2h, 1d.
+  defp age(at) do
+    seconds = DateTime.diff(DateTime.utc_now(), at)
+
+    cond do
+      seconds < 60 -> "now"
+      seconds < 3600 -> "#{div(seconds, 60)}m"
+      seconds < 86_400 -> "#{div(seconds, 3600)}h"
+      true -> "#{div(seconds, 86_400)}d"
+    end
+  end
+
+  # The fade runs over the linger time; the delay puts it where it should be
+  # now, so a re-render doesn't start it again.
+  defp leaving_style(%{leaving_at: nil}), do: nil
+
+  defp leaving_style(%{leaving_at: leaving_at}) do
+    linger = Gitastic.Queue.linger_ms()
+    left = max(DateTime.diff(leaving_at, DateTime.utc_now(), :millisecond), 0)
+    "animation-duration: #{linger}ms; animation-delay: -#{linger - left}ms"
   end
 
   @doc """

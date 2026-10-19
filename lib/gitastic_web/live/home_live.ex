@@ -12,10 +12,12 @@ defmodule GitasticWeb.HomeLive do
   alias Gitastic.{Checks, Drift, MergeRequest}
   import GitasticWeb.MergeRequestComponents
 
+  # The queue's tabs; it also follows the merge requests for this page.
+  on_mount GitasticWeb.QueueHook
+
   @impl true
   def mount(_params, _session, socket) do
     if connected?(socket) do
-      Phoenix.PubSub.subscribe(Gitastic.PubSub, MergeRequest.list_topic())
       Phoenix.PubSub.subscribe(Gitastic.PubSub, Drift.topic())
       Phoenix.PubSub.subscribe(Gitastic.PubSub, Checks.topic())
       if Process.whereis(Gitastic.Watcher), do: Gitastic.Watcher.refresh()
@@ -155,7 +157,7 @@ defmodule GitasticWeb.HomeLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash}>
+    <Layouts.app flash={@flash} queue={@queue}>
       <.drift :if={@drift} drift={@drift} busy={@busy} last_push={@last_push} checks={@checks} />
 
       <h1 class="mb-4 text-lg font-semibold">Merge requests</h1>
@@ -171,7 +173,12 @@ defmodule GitasticWeb.HomeLive do
         </p>
       </div>
 
-      <.mr_list :if={@open != []} id="merge-requests" merge_requests={@open} />
+      <.mr_list
+        :if={@open != []}
+        id="merge-requests"
+        merge_requests={@open}
+        queued={MapSet.new(@queue, & &1.branch)}
+      />
 
       <section :if={@done != []} class="mt-8">
         <h2 class="mb-3 text-sm font-semibold text-(--text-muted)">Merged and closed</h2>
@@ -210,14 +217,17 @@ defmodule GitasticWeb.HomeLive do
           </h2>
           <.link navigate={~p"/drift"} class="text-sm text-(--warn-text) underline">See the diff</.link>
         </div>
-        <ol class="mt-2 space-y-1 text-sm">
+        <%!-- The checks are on main's tip, the newest commit: just above it. --%>
+        <div class="mt-2">
+          <.checks_line sha={@drift.main} status={@checks} id="main-checks" />
+        </div>
+        <ol class="mt-1 space-y-1 text-sm">
           <li :for={c <- @drift.ahead} class="flex gap-2">
             <span class="shrink-0 font-mono text-xs leading-5 text-(--warn-text)">{c.short}</span>
             <span class="min-w-0 flex-1 text-(--text)">{c.subject}</span>
             <span class="shrink-0 text-xs leading-5 text-(--text-muted)">{ago(c.date)}</span>
           </li>
         </ol>
-        <.checks_line sha={@drift.main} status={@checks} id="main-checks" />
         <div class="mt-3 flex flex-col gap-2 sm:flex-row">
           <button
             id="push-button"
@@ -338,6 +348,7 @@ defmodule GitasticWeb.HomeLive do
   attr :id, :string, required: true
   attr :merge_requests, :list, required: true
   attr :pills, :map, default: %{}
+  attr :queued, :any, default: nil, doc: "queued branches; nil hides the queue button"
 
   defp mr_list(assigns) do
     ~H"""
@@ -345,10 +356,10 @@ defmodule GitasticWeb.HomeLive do
       id={@id}
       class="divide-y divide-(--border) overflow-hidden rounded-lg border border-(--border) bg-(--surface)"
     >
-      <li :for={mr <- @merge_requests} id={"mr-#{mr.branch}"}>
+      <li :for={mr <- @merge_requests} id={"mr-#{mr.branch}"} class="flex items-stretch">
         <.link
           navigate={GitasticWeb.mr_path(mr.branch)}
-          class="block px-4 py-3 transition hover:bg-(--surface-2)"
+          class="block min-w-0 flex-1 px-4 py-3 transition hover:bg-(--surface-2)"
         >
           <div class="flex items-start justify-between gap-3">
             <span class="font-medium text-(--text)">{mr.title}</span>
@@ -368,6 +379,12 @@ defmodule GitasticWeb.HomeLive do
             <span :if={mr.done_at}>{ago(mr.done_at)}</span>
           </div>
         </.link>
+        <.queue_button
+          :if={@queued}
+          branch={mr.branch}
+          queued={MapSet.member?(@queued, mr.branch)}
+          class="border-l border-(--border) px-3"
+        />
       </li>
     </ul>
     """

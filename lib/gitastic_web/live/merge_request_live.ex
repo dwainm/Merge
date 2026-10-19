@@ -11,6 +11,9 @@ defmodule GitasticWeb.MergeRequestLive do
   alias Gitastic.{Checks, Drift, Git, MergeRequest}
   import GitasticWeb.MergeRequestComponents
 
+  # The queue's tabs. A tab dropping out never moves this page.
+  on_mount GitasticWeb.QueueHook
+
   @impl true
   def mount(%{"branch" => parts}, _session, socket) do
     branch = Enum.join(parts, "/")
@@ -51,6 +54,9 @@ defmodule GitasticWeb.MergeRequestLive do
 
   @impl true
   def handle_info({:checks, _sha}, socket), do: {:noreply, main_checks(socket)}
+
+  # For the queue's tabs (GitasticWeb.QueueHook); this page follows its own topic.
+  def handle_info(:merge_requests_changed, socket), do: {:noreply, socket}
 
   def handle_info({:merge_request, mr}, socket) do
     {:noreply, socket |> assign(mr: mr, page_title: mr.title) |> load_files()}
@@ -199,7 +205,7 @@ defmodule GitasticWeb.MergeRequestLive do
   @impl true
   def render(%{mr: nil} = assigns) do
     ~H"""
-    <Layouts.app flash={@flash}>
+    <Layouts.app flash={@flash} queue={@queue} current={@branch}>
       <div id="not-found" class="rounded-lg border border-(--border) bg-(--surface) p-6 text-sm">
         <p>No open merge request for <span class="font-mono">{@branch}</span>.</p>
         <.link navigate={~p"/"} class="mt-3 inline-block text-(--link)">All merge requests</.link>
@@ -210,7 +216,7 @@ defmodule GitasticWeb.MergeRequestLive do
 
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash}>
+    <Layouts.app flash={@flash} queue={@queue} current={@branch}>
       <header id="mr-header" class="mb-4">
         <div class="flex items-start justify-between gap-3">
           <h1 class="text-lg font-semibold leading-snug">{@mr.title}</h1>
@@ -218,6 +224,12 @@ defmodule GitasticWeb.MergeRequestLive do
             <.merge_pill :if={not MergeRequest.done?(@mr)} mr={@mr} />
             <.checks_pill check={@pill} />
             <.status status={@mr.status} merged={@mr.merged} />
+            <.queue_button
+              :if={not MergeRequest.done?(@mr)}
+              branch={@mr.branch}
+              queued={Enum.any?(@queue, &(&1.branch == @mr.branch))}
+              class="ml-1 rounded-md border border-(--border) px-2 py-0.5"
+            />
           </div>
         </div>
         <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-(--text-muted)">

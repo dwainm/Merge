@@ -21,6 +21,30 @@ defmodule GitasticWeb.MergeRequestComponents do
     """
   end
 
+  attr :branch, :string, required: true
+  attr :queued, :boolean, required: true
+  attr :class, :string, default: nil
+
+  @doc "Add to queue, or (once queued) take it off. Handled by GitasticWeb.QueueHook."
+  def queue_button(assigns) do
+    ~H"""
+    <button
+      type="button"
+      id={"queue-button-#{@branch}"}
+      phx-click={if(@queued, do: "queue_remove", else: "queue_add")}
+      phx-value-branch={@branch}
+      title={if(@queued, do: "In your review queue: click to take it off", else: "Add to queue")}
+      class={[
+        "shrink-0 text-xs font-medium transition hover:bg-(--surface-2)",
+        if(@queued, do: "text-(--info-text)", else: "text-(--text-muted) hover:text-(--text)"),
+        @class
+      ]}
+    >
+      {if(@queued, do: "✓ Queued", else: "+ Queue")}
+    </button>
+    """
+  end
+
   def status_label(status, merged \\ nil)
   def status_label(:merged, %{pushed: true}), do: "On origin"
   def status_label(:merged, %{pushed: false}), do: "Merged"
