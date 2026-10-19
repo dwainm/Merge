@@ -81,7 +81,7 @@ defmodule GitasticWeb.MergeRequestComponents do
       <p :if={@file.binary?} class="px-3 py-2 text-xs text-(--text-muted)">Binary file</p>
 
       <div :if={@file.hunks != []} class="overflow-x-auto">
-        <table class="hl diff w-full border-collapse font-mono text-[12px] leading-5">
+        <table class="hl code-diff w-full border-collapse font-mono text-[12px] leading-5">
           <tbody :for={hunk <- @file.hunks}>
             <tr class="diff-hunk">
               <td colspan="3" class="whitespace-pre px-3 py-0.5">{hunk.header}</td>

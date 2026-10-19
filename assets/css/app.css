@@ -197,18 +197,29 @@
 }
 
 /* The diff: a full-strength band per changed line, a stronger one behind its
-   line numbers, a solid +/- and code in full-contrast text. */
-.diff { color: var(--text); }
-.diff .diff-num { color: var(--diff-num-text); }
-.diff .diff-code { padding-left: 0.25rem; }
-.diff .diff-marker { display: inline-block; width: 1.25rem; text-align: center; color: var(--diff-marker); }
-.diff .diff-hunk td { background: var(--diff-hunk-bg); color: var(--diff-hunk-text); }
-.diff .diff-add td { background: var(--diff-add-bg); }
-.diff .diff-add .diff-num { background: var(--diff-add-num); color: var(--diff-num-strong); }
-.diff .diff-del td { background: var(--diff-del-bg); }
-.diff .diff-del .diff-num { background: var(--diff-del-num); color: var(--diff-num-strong); }
-.diff .diff-note td { color: var(--text-faint); }
-.diff .diff-pick:hover { background: var(--info-bg); color: var(--link); }
+   line numbers, a solid +/- and code in full-contrast text. Hunks stack; long
+   lines scroll sideways inside the file card while the two line-number
+   columns stay put. (Not `.diff`: daisyUI has a component of that name.) */
+.code-diff { color: var(--text); }
+.code-diff tbody { display: table-row-group; }
+.code-diff .diff-num {
+  position: sticky;
+  min-width: 3rem;
+  width: 3rem;
+  color: var(--diff-num-text);
+  background: var(--surface);
+}
+.code-diff .diff-num:first-child { left: 0; }
+.code-diff .diff-num + .diff-num { left: 3rem; }
+.code-diff .diff-code { padding-left: 0.25rem; }
+.code-diff .diff-marker { display: inline-block; width: 1.25rem; text-align: center; color: var(--diff-marker); }
+.code-diff .diff-hunk td { background: var(--diff-hunk-bg); color: var(--diff-hunk-text); }
+.code-diff .diff-add td { background: var(--diff-add-bg); }
+.code-diff .diff-add .diff-num { background: var(--diff-add-num); color: var(--diff-num-strong); }
+.code-diff .diff-del td { background: var(--diff-del-bg); }
+.code-diff .diff-del .diff-num { background: var(--diff-del-num); color: var(--diff-num-strong); }
+.code-diff .diff-note td { color: var(--text-faint); }
+.code-diff .diff-pick:hover { background: var(--info-bg); color: var(--link); }
 
 /* A merge request's body, rendered from Markdown (Gitastic.Body). */
 .markdown > * + * { margin-top: 0.6em; }
