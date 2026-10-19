@@ -21,8 +21,10 @@ defmodule Gitastic.MergeRequest do
   new commits refresh the diff by themselves; a branch that was rewritten
   (its reviewed head no longer in it) or deleted is flagged in `branch_state`.
   Each new head, and each new tip of main, gets a trial merge into main
-  (`merge_check`): clean, or the files that conflict. Both fields are read with
-  `Map.get`, so merge requests from before them keep working.
+  (`merge_check`): clean, or the files that conflict. When it starts to
+  conflict (or conflicts in other files), the agents are told, as an event in
+  `conflicts`. These fields are read with `Map.get`, so merge requests from
+  before them keep working.
 
   Merging is read from git: once the branch head is on local `main` the merge
   request is `:merged`, with the merge commit in `merged` (`pushed: false`
@@ -58,6 +60,7 @@ defmodule Gitastic.MergeRequest do
     :merged,
     :git_dir,
     :merge_check,
+    conflicts: [],
     branch_state: :ok,
     status: :open,
     agents: [],
@@ -186,9 +189,11 @@ defmodule Gitastic.MergeRequest do
 
   @doc """
   Waits for news for the agent `name`: a comment or a decision it hasn't been
-  told yet, or the merge request closing. Answers at once when there is some;
-  otherwise blocks until there is, or `timeout` ms. Answers `{:ok, outcome}`
-  (`kind` is `:comment`, `:decision` or `:closed`) or `{:ok, :timeout}`.
+  told yet, the branch starting to conflict with main, or the merge request
+  closing. Answers at once when there is some; otherwise blocks until there is,
+  or `timeout` ms. Answers `{:ok, outcome}` (`kind` is `:comment`, `:decision`,
+  `:conflicts` or `:closed`; `conflicts` is the latest conflict news or nil) or
+  `{:ok, :timeout}`.
   """
   def wait(branch, name, timeout) do
     case lookup(branch) do
@@ -354,7 +359,11 @@ defmodule Gitastic.MergeRequest do
           state |> refresh() |> Map.put(:branch_state, moved) |> merge_check()
       end
 
-    if next == state, do: {:reply, :ok, state}, else: {:reply, :ok, changed(next)}
+    cond do
+      next == state -> {:reply, :ok, state}
+      next.seq > state.seq -> {:reply, :ok, changed(tell_waiters(next))}
+      true -> {:reply, :ok, changed(next)}
+    end
   end
 
   def handle_call(:close, _from, %{status: status} = state) when status in [:merged, :closed] do
@@ -427,6 +436,7 @@ defmodule Gitastic.MergeRequest do
 
   def handle_call({:addressed, commit, note, by}, _from, state) do
     repo = git_repo(state)
+    before = state
 
     with {:ok, sha} <- Git.rev_parse(repo, commit),
          true <- Git.on_branch?(repo, sha, state.branch) || {:error, :not_on_branch} do
@@ -446,6 +456,7 @@ defmodule Gitastic.MergeRequest do
         |> Map.put(:branch_state, :ok)
         |> merge_check()
 
+      state = if state.seq > before.seq, do: tell_waiters(state), else: state
       {:reply, {:ok, entry}, changed(state)}
     else
       {:error, :not_on_branch} ->
@@ -528,18 +539,29 @@ defmodule Gitastic.MergeRequest do
 
   defp news?(state, name), do: Map.get(state.cursors, name, 0) < state.seq
 
-  # What `name` hasn't been told yet: the comments since its cursor, and the
-  # latest decision since then, if any. Moves its cursor to now.
+  # What `name` hasn't been told yet: the comments since its cursor, the
+  # latest decision since then, and the latest conflicts, if any. Moves its
+  # cursor to now.
   defp tell(state, name) do
     cursor = Map.get(state.cursors, name, 0)
     decision = state.decisions |> Enum.filter(&(&1.seq > cursor)) |> List.last()
+    comments = Enum.filter(state.comments, &(&1.seq > cursor))
+    conflicts = state |> Map.get(:conflicts, []) |> Enum.filter(&(&1.seq > cursor)) |> List.last()
+
+    kind =
+      cond do
+        decision -> :decision
+        comments != [] or conflicts == nil -> :comment
+        true -> :conflicts
+      end
 
     outcome = %{
       branch: state.branch,
       status: state.status,
-      kind: if(decision, do: :decision, else: :comment),
+      kind: kind,
       decision: decision,
-      comments: Enum.filter(state.comments, &(&1.seq > cursor))
+      comments: comments,
+      conflicts: conflicts
     }
 
     {outcome, %{state | cursors: Map.put(state.cursors, name, state.seq)}}
@@ -562,7 +584,8 @@ defmodule Gitastic.MergeRequest do
       kind: :closed,
       merged: state.merged,
       decision: nil,
-      comments: []
+      comments: [],
+      conflicts: nil
     }
   end
 
@@ -676,7 +699,9 @@ defmodule Gitastic.MergeRequest do
               state
 
             result ->
-              Map.put(state, :merge_check, %{
+              state
+              |> note_conflicts(result, target, target_sha)
+              |> Map.put(:merge_check, %{
                 into: target,
                 target: target_sha,
                 head: state.head,
@@ -688,6 +713,33 @@ defmodule Gitastic.MergeRequest do
       _ -> state
     end
   end
+
+  # Conflicts the agents haven't heard about become an event they're told:
+  # when the branch starts conflicting, or conflicts in other files. Not once
+  # it's merged or closed.
+  defp note_conflicts(state, {:conflicts, files}, into, target_sha)
+       when state.status not in [:merged, :closed] do
+    case Map.get(state, :merge_check) do
+      %{result: {:conflicts, ^files}} ->
+        state
+
+      _ ->
+        event = %{
+          seq: state.seq + 1,
+          files: files,
+          into: into,
+          target: target_sha,
+          head: state.head,
+          at: DateTime.utc_now()
+        }
+
+        state
+        |> Map.put(:conflicts, Map.get(state, :conflicts, []) ++ [event])
+        |> Map.put(:seq, state.seq + 1)
+    end
+  end
+
+  defp note_conflicts(state, _result, _into, _target_sha), do: state
 
   # What is written to disk: everything but the waiting agents.
   defp saved(state), do: state |> Map.from_struct() |> Map.delete(:waiters)

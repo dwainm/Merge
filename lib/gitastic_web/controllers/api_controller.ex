@@ -51,6 +51,7 @@ defmodule GitasticWeb.ApiController do
           kind: outcome.kind,
           decision: outcome.decision,
           comments: outcome.comments,
+          conflicts: outcome[:conflicts],
           text: Report.outcome(outcome, GitasticWeb.mr_url(branch))
         })
 

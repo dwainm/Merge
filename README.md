@@ -86,7 +86,8 @@ reloader picks up code changes, but not new libraries).
 - **Opening an open branch again** registers the second agent on the same merge request.
 - **`mr wait` returns on every comment and every decision.** Each agent (by name) has a cursor;
   a wait answers at once with what that agent hasn't heard, else blocks until there is some, so
-  nothing said while an agent re-arms is missed. Run it again after each answer to keep listening.
+  nothing said while an agent re-arms is missed. It also returns CONFLICTS when the branch stops
+  merging cleanly into main (checked every minute, and whenever main moves), naming the files. Run it again after each answer to keep listening.
   It long-polls (50s holds) and rides out a server restart.
 - **Merge requests are kept on disk** under `~/.gitastic/merge_requests/`, one term file each,
   written on every change and loaded on start.

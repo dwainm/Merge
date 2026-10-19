@@ -233,7 +233,8 @@ defmodule Gitastic.MergeRequestTest do
     assert %{result: :clean, head: ^sha} = mr.merge_check
   end
 
-  test "when main moves under it, a conflict is found and named", c do
+  test "when main moves under it, a conflict is found and named, and the agent is told", c do
+    waiter = Task.async(fn -> MergeRequest.wait(c.branch, "agent", 5_000) end)
     GitRepo.git!(c.repo, ["checkout", "-q", "main"])
 
     GitRepo.commit!(
@@ -246,6 +247,16 @@ defmodule Gitastic.MergeRequestTest do
 
     assert {:ok, %{merge_check: %{result: {:conflicts, ["lib/app.ex"]}}}} =
              MergeRequest.get(c.branch)
+
+    assert {:ok, %{kind: :conflicts, conflicts: %{files: ["lib/app.ex"], into: "main"}} = o} =
+             Task.await(waiter)
+
+    assert Gitastic.Report.outcome(o, nil) =~ "CONFLICTS: #{c.branch}"
+    assert Gitastic.Report.outcome(o, nil) =~ "- lib/app.ex"
+
+    # Told once: the same conflicts again are no news.
+    assert :ok = MergeRequest.check_branch(c.branch)
+    assert {:ok, :timeout} = MergeRequest.wait(c.branch, "agent", 50)
   end
 
   test "a rewritten branch and a deleted one are flagged", c do
