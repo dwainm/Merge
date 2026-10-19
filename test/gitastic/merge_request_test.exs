@@ -148,6 +148,50 @@ defmodule Gitastic.MergeRequestTest do
              MergeRequest.open(%{branch: c.branch, repo: c.repo})
   end
 
+  test "mr merged finds the merge commit on main and tells the waiting agent", c do
+    task = Task.async(fn -> MergeRequest.wait(c.branch, "agent-a", 5_000) end)
+    wait_for_waiters(c.branch, 1)
+
+    GitRepo.git!(c.repo, ["checkout", "-q", "main"])
+    GitRepo.git!(c.repo, ["merge", "-q", "--no-ff", "-m", "Merge the branch", c.branch])
+    merge = GitRepo.git!(c.repo, ["rev-parse", "HEAD"]) |> String.trim()
+
+    assert {:ok, %{sha: ^merge, subject: "Merge the branch", pushed: false}} =
+             MergeRequest.merged(c.branch)
+
+    assert {:ok, %{kind: :closed, status: :merged, merged: %{sha: ^merge}}} = Task.await(task)
+
+    # A later wait hears it at once, as the text an agent reads.
+    {:ok, outcome} = MergeRequest.wait(c.branch, "agent-b", 100)
+    assert Gitastic.Report.outcome(outcome, nil) =~ "MERGED #{String.slice(merge, 0, 7)}"
+  end
+
+  test "mr merged takes the commit it is told", c do
+    sha = GitRepo.git!(c.repo, ["rev-parse", "HEAD"]) |> String.trim()
+    assert {:ok, %{sha: ^sha}} = MergeRequest.merged(c.branch, sha)
+    assert {:ok, %{status: :merged}} = MergeRequest.get(c.branch)
+  end
+
+  test "the minute check marks it merged, not pushed, then on GitHub after the push" do
+    {repo, _origin} = GitRepo.with_origin()
+    branch = "watch-test-#{System.unique_integer([:positive])}"
+    GitRepo.git!(repo, ["checkout", "-q", "-b", branch])
+    head = GitRepo.commit!(repo, %{"README.md" => "# App\n"}, "Add a readme")
+    on_exit(fn -> MergeRequest.close(branch) end)
+    {:ok, _, :opened} = MergeRequest.open(%{branch: branch, repo: repo})
+
+    assert {:error, _} = MergeRequest.check_merged(branch)
+
+    # The coordinator fast-forwards local main.
+    GitRepo.git!(repo, ["checkout", "-q", "main"])
+    GitRepo.git!(repo, ["merge", "-q", "--ff-only", branch])
+    assert {:ok, %{sha: ^head, pushed: false}} = MergeRequest.check_merged(branch)
+    assert {:ok, %{status: :merged, merged: %{pushed: false}}} = MergeRequest.get(branch)
+
+    GitRepo.git!(repo, ["push", "-q", "origin", "main"])
+    assert {:ok, %{sha: ^head, pushed: true}} = MergeRequest.check_merged(branch)
+  end
+
   defp wait_for_waiters(branch, n) do
     case MergeRequest.get(branch) do
       {:ok, %{waiting: waiting}} when length(waiting) == n -> :ok

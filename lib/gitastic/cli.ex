@@ -9,10 +9,11 @@ defmodule Gitastic.CLI do
   """
 
   @usage """
-  gitastic serve [--port N]
+  gitastic serve [--port N] [--repo PATH]
   gitastic mr open <branch> [--repo PATH] [--base BRANCH] [--title T] [--body B | --body-file F] [--as NAME]
   gitastic mr wait <branch> [--as NAME]      returns on each comment or decision; run it again to keep listening
   gitastic mr addressed <branch> <commit> [--note "..."] [--as NAME]
+  gitastic mr merged <branch> [--commit SHA]  marks it merged (found on main when no --commit)
   gitastic mr close <branch>
   gitastic mr list
   """
@@ -25,7 +26,8 @@ defmodule Gitastic.CLI do
     body_file: :string,
     as: :string,
     note: :string,
-    port: :integer
+    port: :integer,
+    commit: :string
   ]
 
   def usage, do: @usage
@@ -81,6 +83,14 @@ defmodule Gitastic.CLI do
     end
   end
 
+  defp command(["mr", "merged", branch], opts) do
+    with {:ok, %{"merged" => m, "url" => url}} <-
+           post("/api/merged", %{branch: branch, commit: opts[:commit]}) do
+      where = if m["pushed"], do: "on GitHub", else: "not pushed yet"
+      IO.puts("Merged #{branch} in #{m["short"]}: #{m["subject"]} (#{where})\n#{url}")
+    end
+  end
+
   defp command(["mr", "close", branch], _opts) do
     with {:ok, %{"status" => status}} <- post("/api/close", %{branch: branch}) do
       IO.puts(
@@ -99,8 +109,15 @@ defmodule Gitastic.CLI do
             do: "nobody waiting",
             else: "waiting: " <> Enum.join(mr["waiting"], ", ")
 
+        merged =
+          case mr["merged"] do
+            %{"short" => short, "pushed" => true} -> " on GitHub in #{short}"
+            %{"short" => short} -> " in #{short}, not pushed"
+            _ -> ""
+          end
+
         IO.puts(
-          "#{mr["branch"]}  #{state(mr["status"])}  #{mr["title"]}  (#{waiting})  #{mr["url"]}"
+          "#{mr["branch"]}  #{state(mr["status"])}#{merged}  #{mr["title"]}  (#{waiting})  #{mr["url"]}"
         )
       end
 

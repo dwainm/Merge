@@ -59,6 +59,89 @@ defmodule Gitastic.Git do
     end
   end
 
+  @doc "True when `ancestor` is reachable from `ref` (both resolve)."
+  def ancestor?(repo, ancestor, ref) do
+    match?({:ok, _}, git(repo, ["merge-base", "--is-ancestor", ancestor, ref]))
+  end
+
+  @doc "True when the repo has a remote called origin."
+  def origin?(repo), do: match?({:ok, _}, git(repo, ["remote", "get-url", "origin"]))
+
+  @doc "Fetches origin, when there is one."
+  def fetch(repo) do
+    if origin?(repo), do: git(repo, ["fetch", "--quiet", "origin"]), else: {:ok, ""}
+  end
+
+  @doc """
+  The commit on `target` that brought `head` in: the oldest merge commit on
+  target's first-parent line whose second parent reaches `head`, or `head`
+  itself (a fast-forward). nil when `head` isn't on `target`.
+  """
+  def merge_commit(repo, target, head) do
+    if ancestor?(repo, head, target) do
+      case git(repo, [
+             "rev-list",
+             "--first-parent",
+             "--reverse",
+             "--parents",
+             "#{head}..#{target}"
+           ]) do
+        {:ok, out} ->
+          out
+          |> String.split("\n", trim: true)
+          |> Enum.map(&String.split/1)
+          |> Enum.find_value(head, fn
+            [sha, _first, second | _] -> if ancestor?(repo, head, second), do: sha
+            _ -> nil
+          end)
+
+        {:error, _} ->
+          head
+      end
+    end
+  end
+
+  @doc "One commit's sha, short sha, subject and commit time."
+  def commit_info(repo, ref) do
+    format = Enum.join(["%H", "%h", "%s", "%cI"], "%x1f")
+
+    with {:ok, out} <- git(repo, ["log", "-1", "--format=#{format}", ref]) do
+      [sha, short, subject, date] = out |> String.trim() |> String.split("\x1f", parts: 4)
+      {:ok, %{sha: sha, short: short, subject: subject, date: date}}
+    end
+  end
+
+  @doc "Pushes local `branch` to origin. Answers git's output either way."
+  def push(repo, branch), do: git(repo, ["push", "origin", branch])
+
+  @doc """
+  Moves local `branch` to origin's, fast-forward only: in the worktree that has
+  it checked out (a merge --ff-only there), else by fetching into the ref.
+  """
+  def pull(repo, branch) do
+    case checked_out_in(repo, branch) do
+      nil -> git(repo, ["fetch", "origin", "#{branch}:#{branch}"])
+      worktree -> git(worktree, ["merge", "--ff-only", "origin/#{branch}"])
+    end
+  end
+
+  defp checked_out_in(repo, branch) do
+    case git(repo, ["worktree", "list", "--porcelain"]) do
+      {:ok, out} ->
+        out
+        |> String.split("\n\n", trim: true)
+        |> Enum.find_value(fn entry ->
+          if String.contains?(entry, "branch refs/heads/#{branch}\n") or
+               String.ends_with?(entry, "branch refs/heads/#{branch}") do
+            entry |> String.split("\n") |> hd() |> String.replace_prefix("worktree ", "")
+          end
+        end)
+
+      {:error, _} ->
+        nil
+    end
+  end
+
   defp diff(repo, args) do
     with {:ok, out} <- git(repo, ["diff", "--no-color", "--no-ext-diff", "-M"] ++ args) do
       {:ok, Diff.parse(out)}

@@ -6,7 +6,7 @@ After=network-online.target caddy-dev.service
 
 [Service]
 WorkingDirectory=/root/projects/gitastic
-ExecStart=/root/projects/gitastic/bin/gitastic serve --port 4747
+ExecStart=/root/projects/gitastic/bin/gitastic serve --port 4747 --repo /root/projects/dayofplenty
 Restart=always
 RestartSec=3
 

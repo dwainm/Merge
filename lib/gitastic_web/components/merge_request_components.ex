@@ -4,6 +4,7 @@ defmodule GitasticWeb.MergeRequestComponents do
   use GitasticWeb, :html
 
   attr :status, :atom, required: true
+  attr :merged, :map, default: nil, doc: "a merged merge request's merge commit"
 
   def status(assigns) do
     ~H"""
@@ -12,19 +13,29 @@ defmodule GitasticWeb.MergeRequestComponents do
       @status == :open && "bg-sky-100 text-sky-800",
       @status == :approved && "bg-emerald-100 text-emerald-800",
       @status == :needs_work && "bg-amber-100 text-amber-800",
-      @status == :merged && "bg-violet-100 text-violet-800",
+      @status == :merged && @merged && @merged.pushed && "bg-violet-100 text-violet-800",
+      @status == :merged && !(@merged && @merged.pushed) && "bg-fuchsia-100 text-fuchsia-800",
       @status == :closed && "bg-zinc-200 text-zinc-700"
     ]}>
-      {status_label(@status)}
+      {status_label(@status, @merged)}
     </span>
     """
   end
 
-  def status_label(:open), do: "In review"
-  def status_label(:approved), do: "Approved"
-  def status_label(:needs_work), do: "Needs work"
-  def status_label(:merged), do: "Merged"
-  def status_label(:closed), do: "Closed"
+  def status_label(status, merged \\ nil)
+  def status_label(:merged, %{pushed: true}), do: "On GitHub"
+  def status_label(:merged, %{pushed: false}), do: "Merged, not pushed"
+  def status_label(status, _merged), do: base_label(status)
+
+  defp base_label(:open), do: "In review"
+  defp base_label(:approved), do: "Approved"
+  defp base_label(:needs_work), do: "Needs work"
+  defp base_label(:merged), do: "Merged"
+  defp base_label(:closed), do: "Closed"
+
+  @doc "Where a merged merge request went: `Merged into main in abc1234: subject`."
+  def merged_line(%{short: short, subject: subject}),
+    do: "Merged into main in #{short}: #{subject}"
 
   @doc "The key a line comment is anchored to on the page."
   def line_key(path, %{type: :del, old: old}), do: {path, "old", old}

@@ -24,6 +24,9 @@ config :gitastic, GitasticWeb.Endpoint,
   # Port 0 asks the OS for a free port; `gitastic serve --port N` sets PORT.
   http: [port: String.to_integer(System.get_env("PORT", "0"))]
 
+# How often the watcher fetches origin and checks main and the merges; off in tests.
+config :gitastic, :watch_ms, if(config_env() != :test, do: 60_000)
+
 # Where each merge request is kept on disk (Gitastic.Store). Tests keep nothing,
 # and neither does an ad-hoc `gitastic serve` beside the main one (GITASTIC_STORE=off).
 config :gitastic,

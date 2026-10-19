@@ -25,6 +25,25 @@ defmodule Gitastic.GitRepo do
     dir
   end
 
+  @doc """
+  A bare repo standing in for GitHub and a clone of it with one commit on main,
+  pushed. Returns `{clone, origin}`; both are removed when the test ends.
+  """
+  def with_origin do
+    root = Path.join(System.tmp_dir!(), "gitastic-pair-#{System.unique_integer([:positive])}")
+    origin = Path.join(root, "origin.git")
+    clone = Path.join(root, "clone")
+    File.mkdir_p!(origin)
+    on_exit(fn -> File.rm_rf!(root) end)
+
+    git!(origin, ["init", "-q", "--bare", "-b", "main"])
+    {_, 0} = System.cmd("git", ["clone", "-q", origin, clone], stderr_to_stdout: true)
+    git!(clone, ["checkout", "-q", "-B", "main"])
+    commit!(clone, %{"lib/app.ex" => "defmodule App do\nend\n"}, "First")
+    git!(clone, ["push", "-q", "-u", "origin", "main"])
+    {clone, origin}
+  end
+
   @doc "Writes the files and commits them on the current branch. Returns the sha."
   def commit!(dir, files, message) do
     for {path, content} <- files do

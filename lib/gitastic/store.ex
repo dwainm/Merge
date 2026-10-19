@@ -27,6 +27,27 @@ defmodule Gitastic.Store do
     :ok
   end
 
+  @doc "Keeps one other term by name, beside the merge requests (the last push)."
+  def put_named(name, term) do
+    with dir when is_binary(dir) <- dir() do
+      file = Path.join(Path.dirname(dir), name <> ".term")
+      File.mkdir_p!(Path.dirname(file))
+      File.write!(file <> ".tmp", :erlang.term_to_binary(term))
+      File.rename!(file <> ".tmp", file)
+    end
+
+    :ok
+  end
+
+  def get_named(name) do
+    with dir when is_binary(dir) <- dir(),
+         {:ok, bin} <- File.read(Path.join(Path.dirname(dir), name <> ".term")) do
+      :erlang.binary_to_term(bin)
+    else
+      _ -> nil
+    end
+  end
+
   @doc "Every stored merge request's state."
   def all do
     case dir() && File.ls(dir()) do

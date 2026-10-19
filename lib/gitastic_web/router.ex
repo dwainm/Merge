@@ -19,6 +19,7 @@ defmodule GitasticWeb.Router do
 
     live "/", HomeLive
     live "/mr/*branch", MergeRequestLive
+    live "/drift", DriftLive
   end
 
   # The MCP server: claude mcp add --transport http gitastic http://localhost:<PORT>/mcp
@@ -35,6 +36,7 @@ defmodule GitasticWeb.Router do
     post "/show", ApiController, :show
     post "/wait", ApiController, :wait
     post "/addressed", ApiController, :addressed
+    post "/merged", ApiController, :merged
     post "/close", ApiController, :close
   end
 

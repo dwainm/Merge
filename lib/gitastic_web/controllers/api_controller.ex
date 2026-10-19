@@ -67,6 +67,14 @@ defmodule GitasticWeb.ApiController do
     end
   end
 
+  def merged(conn, %{"branch" => branch} = params) do
+    case MergeRequest.merged(branch, params["commit"]) do
+      {:ok, merged} -> json(conn, %{merged: merged, url: GitasticWeb.mr_url(branch)})
+      {:error, message} -> error(conn, 422, message)
+      :error -> not_found(conn, branch)
+    end
+  end
+
   def close(conn, %{"branch" => branch}) do
     case MergeRequest.close(branch) do
       {:ok, status} -> json(conn, %{closed: branch, status: status})
@@ -85,6 +93,7 @@ defmodule GitasticWeb.ApiController do
       opened_by: mr.opened_by,
       agents: mr.agents,
       waiting: mr.waiting,
+      merged: mr.merged,
       commits: length(mr.commits),
       files: length(mr.files),
       comments: length(mr.comments),

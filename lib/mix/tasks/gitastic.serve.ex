@@ -14,7 +14,7 @@ defmodule Mix.Tasks.Gitastic.Serve do
 
   @impl true
   def run(args) do
-    {opts, _, _} = OptionParser.parse(args, strict: [port: :integer])
+    {opts, _, _} = OptionParser.parse(args, strict: [port: :integer, repo: :string])
 
     if port = opts[:port], do: System.put_env("PORT", Integer.to_string(port))
     # Decided before the app starts, since starting it restores the store.
@@ -22,6 +22,9 @@ defmodule Mix.Tasks.Gitastic.Serve do
 
     if match?({:held, _}, GitasticWeb.DevTunnel.held_by()),
       do: Application.put_env(:gitastic, :store_dir, nil)
+
+    # The repo whose main the home page compares with GitHub.
+    if repo = opts[:repo], do: Application.put_env(:gitastic, :repo, Path.expand(repo))
 
     Application.put_env(:phoenix, :serve_endpoints, true, persistent: true)
     Mix.Task.run("app.start")

@@ -20,6 +20,9 @@ No GitHub and no database: each merge request is a process, gone when the server
     gitastic mr addressed <branch> <commit> [--note "..."] [--as NAME]
         gitastic mr addressed checkin HEAD --note "Kept hello, added the test"
 
+    gitastic mr merged <branch> [--commit SHA]
+        gitastic mr merged checkin         # after merging into main; finds the merge commit itself
+
     gitastic mr close <branch>
         gitastic mr close checkin
 
@@ -27,6 +30,15 @@ No GitHub and no database: each merge request is a process, gone when the server
         gitastic mr list                   # checkin  open  Coffee shop check-in  (waiting: checkin)  <url>
 
 The commands find the server through `~/.gitastic/url` (`GITASTIC_URL` overrides it).
+
+## main against GitHub
+
+The home page shows where the repo's local `main` stands against `origin/main`
+(`serve --repo PATH`, else the first merge request's repo): one quiet line when
+they match, else the commits on either side, a diff page, and **Push** or **Pull**.
+A push is checked by fetching again; its result stays until the next one. Every
+minute the server fetches, refreshes this, and marks merge requests whose branch
+is on main as "Merged, not pushed", then "On GitHub" once origin/main has it.
 
 ## MCP
 
@@ -52,9 +64,12 @@ reloader picks up code changes, but not new libraries).
 - **An agent's name** is `--as`, else `GITASTIC_AS`, else the current directory's name (the
   worktree name, which is the stream's name).
 - **Opening an open branch again** registers the second agent on the same merge request.
-- **`mr wait` returns at once when the last decision hasn't been addressed**, so an agent that
-  registers late still hears it; otherwise it blocks until the next decision or a close. Every
-  agent blocked in it is told. It long-polls: the server holds each request 50s, and the CLI asks again.
+- **`mr wait` returns on every comment and every decision.** Each agent (by name) has a cursor;
+  a wait answers at once with what that agent hasn't heard, else blocks until there is some, so
+  nothing said while an agent re-arms is missed. Run it again after each answer to keep listening.
+  It long-polls (50s holds) and rides out a server restart.
+- **Merge requests are kept on disk** under `~/.gitastic/merge_requests/`, one term file each,
+  written on every change and loaded on start.
 - **The review goes in rounds.** A comment belongs to the round it was written in; a decision closes
   the round; `addressed` answers it with a commit and a note, recomputes the diff and opens the next
   round. The wait output lists this round's comments, then the earlier ones with their notes.

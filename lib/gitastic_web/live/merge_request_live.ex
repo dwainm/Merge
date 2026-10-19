@@ -192,7 +192,7 @@ defmodule GitasticWeb.MergeRequestLive do
       <header id="mr-header" class="mb-4">
         <div class="flex items-start justify-between gap-3">
           <h1 class="text-lg font-semibold leading-snug">{@mr.title}</h1>
-          <.status status={@mr.status} />
+          <.status status={@mr.status} merged={@mr.merged} />
         </div>
         <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-zinc-500">
           <span class="font-mono">{@mr.branch} → {@mr.base}</span>
@@ -218,7 +218,16 @@ defmodule GitasticWeb.MergeRequestLive do
           @mr.status == :closed && "bg-zinc-100 text-zinc-700"
         ]}
       >
-        {status_label(@mr.status)} {ago(@mr.done_at)}. Kept to look back at: the diff is as it was then.
+        <%= if @mr.merged do %>
+          <p class="font-medium">{merged_line(@mr.merged)}</p>
+          <p class="mt-0.5 text-xs opacity-80">
+            {ago(@mr.merged.date)} · {if @mr.merged.pushed,
+              do: "On GitHub in #{@mr.merged.short}",
+              else: "Not pushed to GitHub yet"} · the diff is as it was then.
+          </p>
+        <% else %>
+          {status_label(@mr.status)} {ago(@mr.done_at)}. Kept to look back at: the diff is as it was then.
+        <% end %>
       </div>
 
       <div

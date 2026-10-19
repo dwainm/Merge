@@ -17,6 +17,11 @@ defmodule Gitastic.MergeRequest do
   answers at once with whatever is past the agent's cursor, or blocks until
   there is some, so nothing said while an agent re-arms its wait is missed.
 
+  Merging is read from git: once the branch head is on local `main` the merge
+  request is `:merged`, with the merge commit in `merged` (`pushed: false`
+  until that commit is on `origin/main` too). `merged/2` marks it when the
+  coordinator merges; `Gitastic.Watcher` calls `check_merged/1` every minute.
+
   Closing doesn't end the process: the merge request is done, `:merged` when its
   last decision was an approval and `:closed` otherwise, and stays to look back
   at, read-only, with the diff as it was, until the server stops or the branch
@@ -43,6 +48,7 @@ defmodule Gitastic.MergeRequest do
     :head,
     :merge_base,
     :done_at,
+    :merged,
     status: :open,
     agents: [],
     comments: [],
@@ -169,6 +175,16 @@ defmodule Gitastic.MergeRequest do
     :exit, _ -> {:error, :not_found}
   end
 
+  @doc """
+  Marks it merged into main: at `commit`, or at the commit on main (else on
+  origin/main) that brought the branch head in. Answers `{:ok, merged}` or
+  `{:error, message}` when the branch isn't on main.
+  """
+  def merged(branch, commit \\ nil), do: call(branch, {:merged, commit, :manual})
+
+  @doc "Marks it merged if git says it is, and notes when the merge reaches origin/main."
+  def check_merged(branch), do: call(branch, {:merged, nil, :auto})
+
   @doc "Marks it merged (when approved) or closed, and tells the waiting agents. It stays, read-only."
   def close(branch), do: call(branch, :close)
 
@@ -248,6 +264,40 @@ defmodule Gitastic.MergeRequest do
   def handle_call({:wait, name, _timeout}, _from, %{status: status} = state)
       when status in [:merged, :closed] do
     {:reply, {:ok, closed_outcome(register(state, name))}, state}
+  end
+
+  # Merging is checked before the done-is-read-only rule: a closed one can still
+  # be marked merged by hand, and a merged one learns when it reaches GitHub.
+  def handle_call({:merged, commit, mode}, _from, state) do
+    cond do
+      state.merged && state.merged.pushed ->
+        {:reply, {:ok, state.merged}, state}
+
+      mode == :auto and (state.status == :closed or state.commits == []) ->
+        {:reply, {:error, :not_merged}, state}
+
+      true ->
+        case find_merge(state, commit) do
+          {:ok, info} when info == state.merged ->
+            {:reply, {:ok, info}, state}
+
+          {:ok, info} ->
+            newly? = state.status != :merged or state.merged == nil
+
+            state = %{
+              state
+              | status: :merged,
+                merged: info,
+                done_at: state.done_at || DateTime.utc_now()
+            }
+
+            state = if newly?, do: tell_closed(state), else: state
+            {:reply, {:ok, info}, changed(state)}
+
+          {:error, message} ->
+            {:reply, {:error, message}, state}
+        end
+    end
   end
 
   def handle_call(:close, _from, %{status: status} = state) when status in [:merged, :closed] do
@@ -361,14 +411,7 @@ defmodule Gitastic.MergeRequest do
     approved? = match?(%{verdict: :approved}, List.last(state.decisions))
     status = if approved?, do: :merged, else: :closed
     state = %{state | status: status, done_at: DateTime.utc_now()}
-
-    for {ref, {from, timer, _name}} <- state.waiters do
-      Process.cancel_timer(timer)
-      Process.demonitor(ref, [:flush])
-      GenServer.reply(from, {:ok, closed_outcome(state)})
-    end
-
-    state = changed(%{state | waiters: %{}})
+    state = changed(tell_closed(state))
     {:reply, {:ok, status}, state}
   end
 
@@ -438,8 +481,59 @@ defmodule Gitastic.MergeRequest do
     {outcome, %{state | cursors: Map.put(state.cursors, name, state.seq)}}
   end
 
+  defp tell_closed(state) do
+    for {ref, {from, timer, _name}} <- state.waiters do
+      Process.cancel_timer(timer)
+      Process.demonitor(ref, [:flush])
+      GenServer.reply(from, {:ok, closed_outcome(state)})
+    end
+
+    %{state | waiters: %{}}
+  end
+
   defp closed_outcome(state) do
-    %{branch: state.branch, status: state.status, kind: :closed, decision: nil, comments: []}
+    %{
+      branch: state.branch,
+      status: state.status,
+      kind: :closed,
+      merged: state.merged,
+      decision: nil,
+      comments: []
+    }
+  end
+
+  # Where the branch went into main: the given commit, or the one git finds on
+  # local main, else on origin/main. `pushed` is whether origin/main has it.
+  defp find_merge(state, commit) do
+    repo = state.repo
+    remote = if match?({:ok, _}, Git.rev_parse(repo, "origin/main")), do: "origin/main"
+
+    sha =
+      cond do
+        commit ->
+          case Git.rev_parse(repo, commit) do
+            {:ok, sha} -> sha
+            {:error, _} -> nil
+          end
+
+        Git.ancestor?(repo, state.head, "main") ->
+          Git.merge_commit(repo, "main", state.head)
+
+        remote && Git.ancestor?(repo, state.head, remote) ->
+          Git.merge_commit(repo, remote, state.head)
+
+        true ->
+          nil
+      end
+
+    with sha when is_binary(sha) <- sha,
+         {:ok, info} <- Git.commit_info(repo, sha) do
+      {:ok, Map.put(info, :pushed, remote != nil and Git.ancestor?(repo, sha, remote))}
+    else
+      _ ->
+        {:error,
+         if(commit, do: "#{commit} is not a commit.", else: "#{state.branch} is not on main yet.")}
+    end
   end
 
   # A merge request saved before comments and decisions were numbered: number
