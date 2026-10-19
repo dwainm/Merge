@@ -8,15 +8,17 @@ defmodule GitasticWeb.MergeRequestLive do
 
   use GitasticWeb, :live_view
 
-  alias Gitastic.{Git, MergeRequest}
+  alias Gitastic.{Checks, Drift, Git, MergeRequest}
   import GitasticWeb.MergeRequestComponents
 
   @impl true
   def mount(%{"branch" => parts}, _session, socket) do
     branch = Enum.join(parts, "/")
 
-    if connected?(socket),
-      do: Phoenix.PubSub.subscribe(Gitastic.PubSub, MergeRequest.topic(branch))
+    if connected?(socket) do
+      Phoenix.PubSub.subscribe(Gitastic.PubSub, MergeRequest.topic(branch))
+      Phoenix.PubSub.subscribe(Gitastic.PubSub, Checks.topic())
+    end
 
     mr =
       case MergeRequest.get(branch) do
@@ -49,6 +51,8 @@ defmodule GitasticWeb.MergeRequestLive do
   end
 
   @impl true
+  def handle_info({:checks, _sha}, socket), do: {:noreply, main_checks(socket)}
+
   def handle_info({:merge_request, mr}, socket) do
     {:noreply, socket |> assign(mr: mr, page_title: mr.title) |> load_files()}
   end
@@ -156,12 +160,27 @@ defmodule GitasticWeb.MergeRequestLive do
           |> MapSet.new(& &1.sha)
       end
 
-    assign(socket,
+    socket
+    |> main_checks()
+    |> assign(
       line_comments: line_comments,
       new_since: new_since,
       selected: commit && Enum.find(mr.commits, &(&1.sha == commit))
     )
   end
+
+  # Once merged, where main's checks stand, so the stream knows its merge is safe.
+  defp main_checks(%{assigns: %{mr: %{merged: %{}}}} = socket) do
+    with %{main: main} <- Drift.current(),
+         pid when is_pid(pid) <- Process.whereis(Checks),
+         true <- Checks.enabled?() do
+      assign(socket, main_checks: {main, Checks.status(main)})
+    else
+      _ -> assign(socket, main_checks: nil)
+    end
+  end
+
+  defp main_checks(socket), do: assign(socket, main_checks: nil)
 
   # The conversation, in order: comments, decisions and addressed commits.
   defp timeline(mr) do
@@ -225,6 +244,14 @@ defmodule GitasticWeb.MergeRequestLive do
               do: "On origin in #{@mr.merged.short}",
               else: "Not pushed to origin yet"} · the diff is as it was then.
           </p>
+          <div :if={@main_checks} class="mt-2">
+            <.checks_line
+              lead="main at"
+              sha={elem(@main_checks, 0)}
+              status={elem(@main_checks, 1)}
+              id="main-checks"
+            />
+          </div>
         <% else %>
           {status_label(@mr.status)} {ago(@mr.done_at)}. Kept to look back at: the diff is as it was then.
         <% end %>

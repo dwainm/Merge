@@ -20,6 +20,7 @@ defmodule GitasticWeb.Router do
     live "/", HomeLive
     live "/mr/*branch", MergeRequestLive
     live "/drift", DriftLive
+    live "/checks/:sha", ChecksLive
   end
 
   # The MCP server: claude mcp add --transport http gitastic http://localhost:<PORT>/mcp

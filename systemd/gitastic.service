@@ -6,7 +6,7 @@ After=network-online.target caddy-dev.service
 
 [Service]
 WorkingDirectory=/root/projects/gitastic
-ExecStart=/root/projects/gitastic/bin/gitastic serve --port 4747 --repo /root/projects/dayofplenty
+ExecStart=/root/projects/gitastic/bin/gitastic serve --port 4747 --repo /root/projects/dayofplenty --check 'MIX_ENV=test MIX_TEST_PARTITION=_gitastic_checks; export MIX_ENV MIX_TEST_PARTITION; mix deps.get && mix compile --warnings-as-errors && mix check'
 Restart=always
 RestartSec=3
 

@@ -193,6 +193,62 @@ defmodule GitasticWeb.MergeRequestComponents do
   def count(1, word), do: "1 #{word}"
   def count(n, word), do: "#{n} #{word}s"
 
+  attr :sha, :string, required: true
+  attr :status, :any, required: true, doc: "Gitastic.Checks.status/1, or :off"
+  attr :lead, :string, default: nil, doc: "what comes before, e.g. \"main at\""
+  attr :id, :string, default: "checks"
+
+  @doc "Where the checks of a commit stand, with the end of the log when they failed."
+  def checks_line(%{status: :off} = assigns), do: ~H""
+
+  def checks_line(assigns) do
+    assigns = assign(assigns, short: String.slice(assigns.sha, 0, 7))
+
+    ~H"""
+    <div id={@id} class="text-sm">
+      <p class="flex flex-wrap items-baseline gap-x-2">
+        <span :if={@lead} class="text-(--text-muted)">{@lead} <span class="font-mono">{@short}</span>:</span>
+        <%= case @status do %>
+          <% %{ok: true} = r -> %>
+            <span class="font-medium text-(--ok-text)">✓ Checks passed</span>
+            <span :if={!@lead} class="text-(--text-muted)">on <span class="font-mono">{@short}</span></span>
+            <span class="text-xs text-(--text-faint)">{took(r)}</span>
+          <% %{ok: false} -> %>
+            <span class="font-medium text-(--bad-text)">✗ Checks failed</span>
+            <span :if={!@lead} class="text-(--text-muted)">on <span class="font-mono">{@short}</span></span>
+          <% {:running, at} -> %>
+            <span class="font-medium text-(--warn-text)">● Checks running</span>
+            <span :if={!@lead} class="text-(--text-muted)">on <span class="font-mono">{@short}</span></span>
+            <span class="text-xs text-(--text-faint)">started {ago(at)}</span>
+          <% {:queued, _} -> %>
+            <span class="font-medium text-(--warn-text)">Checks queued</span>
+          <% :none -> %>
+            <span class="text-(--text-muted)">Checks haven't run yet</span>
+        <% end %>
+        <.link
+          :if={@status != :none}
+          navigate={"/checks/" <> @sha}
+          class="text-xs text-(--link) underline"
+        >
+          log
+        </.link>
+      </p>
+      <pre
+        :if={match?(%{ok: false}, @status)}
+        class="mt-2 max-h-48 overflow-auto rounded-md bg-(--bad-bg) p-2 text-xs text-(--text)"
+      >{last_lines(@status.log, 15)}</pre>
+    </div>
+    """
+  end
+
+  defp took(%{started_at: s, finished_at: f}) do
+    seconds = DateTime.diff(f, s)
+    "#{div(seconds, 60)}m #{rem(seconds, 60)}s"
+  end
+
+  defp last_lines(log, n),
+    do: log |> String.trim_trailing() |> String.split("\n") |> Enum.take(-n) |> Enum.join("\n")
+
   @doc "A short relative time for an ISO 8601 string or a DateTime."
   def ago(iso) when is_binary(iso) do
     case DateTime.from_iso8601(iso) do

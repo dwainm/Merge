@@ -9,7 +9,7 @@ defmodule GitasticWeb.HomeLive do
   # How long a successful push's result stays up. A failure stays until the next push.
   @success_ms 10_000
 
-  alias Gitastic.{Drift, MergeRequest}
+  alias Gitastic.{Checks, Drift, MergeRequest}
   import GitasticWeb.MergeRequestComponents
 
   @impl true
@@ -17,6 +17,7 @@ defmodule GitasticWeb.HomeLive do
     if connected?(socket) do
       Phoenix.PubSub.subscribe(Gitastic.PubSub, MergeRequest.list_topic())
       Phoenix.PubSub.subscribe(Gitastic.PubSub, Drift.topic())
+      Phoenix.PubSub.subscribe(Gitastic.PubSub, Checks.topic())
       if Process.whereis(Gitastic.Watcher), do: Gitastic.Watcher.refresh()
     end
 
@@ -25,12 +26,17 @@ defmodule GitasticWeb.HomeLive do
      |> assign(page_title: "Merge requests", busy: nil)
      |> show_push(Drift.last_push())
      |> assign(:drift, Drift.current() || Drift.read())
+     |> load_checks()
      |> load()}
   end
 
   @impl true
   def handle_info(:merge_requests_changed, socket), do: {:noreply, load(socket)}
-  def handle_info({:drift, drift}, socket), do: {:noreply, assign(socket, drift: drift)}
+
+  def handle_info({:drift, drift}, socket),
+    do: {:noreply, socket |> assign(drift: drift) |> load_checks()}
+
+  def handle_info({:checks, _sha}, socket), do: {:noreply, load_checks(socket)}
 
   def handle_info(:hide_push, socket) do
     case socket.assigns.last_push do
@@ -40,9 +46,16 @@ defmodule GitasticWeb.HomeLive do
   end
 
   @impl true
+  # Push only what passed the checks; Push anyway is the deliberate way round.
   def handle_event("push", _params, socket) do
-    {:noreply, socket |> assign(busy: :push) |> start_async(:push, fn -> Drift.push() end)}
+    if checks_passed?(socket.assigns.checks) do
+      {:noreply, push(socket)}
+    else
+      {:noreply, put_flash(socket, :error, "main's checks haven't passed. Use Push anyway.")}
+    end
   end
+
+  def handle_event("push_anyway", _params, socket), do: {:noreply, push(socket)}
 
   def handle_event("pull", _params, socket) do
     {:noreply, socket |> assign(busy: :pull) |> start_async(:pull, fn -> Drift.pull() end)}
@@ -79,22 +92,69 @@ defmodule GitasticWeb.HomeLive do
 
   defp show_push(socket, result), do: assign(socket, last_push: result)
 
+  defp push(socket) do
+    socket |> assign(busy: :push) |> start_async(:push, fn -> Drift.push() end)
+  end
+
+  # The checks of main's tip: :off without a check command, else Checks.status/1.
+  defp load_checks(socket) do
+    checks =
+      with %{main: main} <- socket.assigns.drift,
+           pid when is_pid(pid) <- Process.whereis(Checks),
+           true <- Checks.enabled?() do
+        Checks.status(main)
+      else
+        _ -> :off
+      end
+
+    assign(socket, checks: checks)
+  end
+
+  defp checks_passed?(:off), do: true
+  defp checks_passed?(%{ok: ok}), do: ok
+  defp checks_passed?(_), do: false
+
   defp load(socket) do
     {done, open} = Enum.split_with(MergeRequest.list(), &MergeRequest.done?/1)
     assign(socket, open: open, done: done)
   end
 
-  # The confirmation lists what goes out.
-  defp push_confirm(ahead) do
+  # The confirmation lists what goes out, and what was checked.
+  defp push_confirm(ahead, checks) do
     lines = Enum.map_join(ahead, "\n", &"#{&1.short}  #{&1.subject}")
-    "Push #{count(ahead, "commit")} to GitHub? This deploys.\n\n" <> lines
+
+    checked =
+      if match?(%{ok: true}, checks),
+        do: "\n\nChecks passed on #{String.slice(checks.sha, 0, 7)}.",
+        else: ""
+
+    "Push #{count(ahead, "commit")} to GitHub? This deploys.\n\n" <> lines <> checked
   end
+
+  defp push_anyway_confirm(ahead, checks) do
+    why =
+      case checks do
+        %{ok: false} -> "main's checks FAILED."
+        {:running, _} -> "main's checks are still running."
+        _ -> "main's checks haven't run."
+      end
+
+    why <>
+      " Push anyway? This deploys code that hasn't passed them.\n\n" <>
+      Enum.map_join(ahead, "\n", &"#{&1.short}  #{&1.subject}")
+  end
+
+  defp push_label(:push, _checks), do: "Pushing…"
+  defp push_label(_busy, %{ok: true}), do: "Push"
+  defp push_label(_busy, :off), do: "Push"
+  defp push_label(_busy, %{ok: false}), do: "Push (checks failed)"
+  defp push_label(_busy, _checks), do: "Push (waiting for checks)"
 
   @impl true
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash}>
-      <.drift :if={@drift} drift={@drift} busy={@busy} last_push={@last_push} />
+      <.drift :if={@drift} drift={@drift} busy={@busy} last_push={@last_push} checks={@checks} />
 
       <h1 class="mb-4 text-lg font-semibold">Merge requests</h1>
 
@@ -120,6 +180,7 @@ defmodule GitasticWeb.HomeLive do
   end
 
   attr :drift, :map, required: true
+  attr :checks, :any, default: :off
   attr :busy, :atom, default: nil
   attr :last_push, :map, default: nil
 
@@ -133,6 +194,8 @@ defmodule GitasticWeb.HomeLive do
       >
         main is on GitHub (<span class="font-mono">{String.slice(@drift.main, 0, 7)}</span>)
       </p>
+
+      <.checks_line :if={@drift.ahead == []} sha={@drift.main} status={@checks} />
 
       <div
         :if={@drift.ahead != []}
@@ -152,15 +215,28 @@ defmodule GitasticWeb.HomeLive do
             <span class="shrink-0 text-xs leading-5 text-(--text-muted)">{ago(c.date)}</span>
           </li>
         </ol>
-        <button
-          id="push-button"
-          phx-click="push"
-          data-confirm={push_confirm(@drift.ahead)}
-          disabled={@busy != nil}
-          class="mt-3 w-full rounded-md bg-(--btn-bg) px-4 py-2 text-sm font-medium text-(--btn-text) hover:opacity-90 disabled:opacity-50 sm:w-auto"
-        >
-          {if @busy == :push, do: "Pushing…", else: "Push"}
-        </button>
+        <.checks_line sha={@drift.main} status={@checks} id="main-checks" />
+        <div class="mt-3 flex flex-col gap-2 sm:flex-row">
+          <button
+            id="push-button"
+            phx-click="push"
+            data-confirm={push_confirm(@drift.ahead, @checks)}
+            disabled={@busy != nil or not checks_passed?(@checks)}
+            class="w-full rounded-md bg-(--btn-bg) px-4 py-2 text-sm font-medium text-(--btn-text) hover:opacity-90 disabled:opacity-50 sm:w-auto"
+          >
+            {push_label(@busy, @checks)}
+          </button>
+          <button
+            :if={not checks_passed?(@checks)}
+            id="push-anyway-button"
+            phx-click="push_anyway"
+            data-confirm={push_anyway_confirm(@drift.ahead, @checks)}
+            disabled={@busy != nil}
+            class="w-full rounded-md bg-(--surface) px-4 py-2 text-sm font-medium text-(--bad-text) ring-1 ring-(--bad-border) hover:bg-(--bad-bg) disabled:opacity-50 sm:w-auto"
+          >
+            Push anyway
+          </button>
+        </div>
       </div>
 
       <div

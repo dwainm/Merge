@@ -9,7 +9,7 @@ defmodule Gitastic.CLI do
   """
 
   @usage """
-  gitastic serve [--port N] [--repo PATH]
+  gitastic serve [--port N] [--repo PATH] [--check CMD]
   gitastic mr open <branch> [--repo PATH] [--base BRANCH] [--title T] [--body B | --body-file F] [--as NAME]
   gitastic mr wait <branch> [--as NAME]      returns on each comment or decision; run it again to keep listening
   gitastic mr addressed <branch> <commit> [--note "..."] [--as NAME]
