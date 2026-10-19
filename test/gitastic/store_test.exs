@@ -52,4 +52,35 @@ defmodule Gitastic.StoreTest do
     {:ok, _} = MergeRequest.decide(branch, :approved)
     assert {:ok, %{status: :approved}} = MergeRequest.wait(branch, "agent-a", 1_000)
   end
+
+  test "one saved before comments were numbered comes back where the old rule left each agent" do
+    branch = "store-old/#{System.unique_integer([:positive])}"
+    repo = GitRepo.new(branch)
+    GitRepo.commit!(repo, %{"lib/app.ex" => "defmodule App do\nend\n"}, "Empty the app")
+    on_exit(fn -> MergeRequest.close(branch) end)
+
+    {:ok, _, :opened} = MergeRequest.open(%{branch: branch, repo: repo, opened_by: "agent-a"})
+    {:ok, _} = MergeRequest.comment(branch, %{body: "Why empty?"})
+    {:ok, _} = MergeRequest.decide(branch, :needs_work, "Keep hello.")
+
+    # Rewrite the file the way the previous version saved it.
+    [{pid, _}] = Registry.lookup(Gitastic.Registry, branch)
+    {:ok, mr} = MergeRequest.get(branch)
+    :ok = DynamicSupervisor.terminate_child(Gitastic.MergeRequests, pid)
+
+    old =
+      mr
+      |> Map.drop([:seq, :cursors, :waiting])
+      |> Map.update!(:comments, fn cs -> Enum.map(cs, &Map.delete(&1, :seq)) end)
+      |> Map.update!(:decisions, fn ds -> Enum.map(ds, &Map.delete(&1, :seq)) end)
+
+    Gitastic.Store.put(old)
+    MergeRequest.restore_all()
+
+    # The decision wasn't addressed, so agent-a hears it, with its round's comment, once.
+    assert {:ok, %{kind: :decision, comments: [%{body: "Why empty?"}]}} =
+             MergeRequest.wait(branch, "agent-a", 1_000)
+
+    assert {:ok, :timeout} = MergeRequest.wait(branch, "agent-a", 50)
+  end
 end

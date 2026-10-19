@@ -4,16 +4,30 @@ defmodule Gitastic.Report do
   """
 
   @doc """
-  The outcome of a wait as the text an agent reads as its next prompt. `via` is
-  `:cli` or `:mcp`, for the hint on what to do next.
+  The news of a wait as the text an agent reads as its next prompt: COMMENT for
+  new comments, APPROVED or NEEDS WORK for a decision (with the comments since
+  the agent last heard), or the merge request closing. `via` is `:cli` or
+  `:mcp`, for the hint on what to do next.
   """
   def outcome(o, url, via \\ :cli)
 
-  def outcome(%{status: status} = o, _url, _via) when status in [:merged, :closed] do
-    "Merge request #{o.branch} was #{status}.\n"
+  def outcome(%{kind: :closed} = o, _url, _via) do
+    "Merge request #{o.branch} was #{o.status}.\n"
   end
 
-  def outcome(o, url, via) do
+  def outcome(%{kind: :comment} = o, url, via) do
+    heading = if length(o.comments) == 1, do: "COMMENT", else: "#{length(o.comments)} COMMENTS"
+
+    IO.iodata_to_binary([
+      "#{heading}: #{o.branch}\n",
+      url && "#{url}\n",
+      "\n",
+      Enum.map(o.comments, &comment/1),
+      listen(o.branch, via)
+    ])
+  end
+
+  def outcome(%{kind: :decision} = o, url, via) do
     d = o.decision
 
     headline =
@@ -27,38 +41,25 @@ defmodule Gitastic.Report do
       "\n",
       url && "#{url}\n",
       d.body != "" && "\n#{d.by}: #{d.body}\n",
-      comments("Comments", o.comments, []),
-      comments("Earlier comments", o.earlier, o.addressed),
-      d.verdict == :needs_work && next_step(o.branch, via)
+      o.comments != [] &&
+        ["\nComments since you last heard:\n" | Enum.map(o.comments, &comment/1)],
+      d.verdict == :needs_work && next_step(o.branch, via),
+      listen(o.branch, via)
     ]
     |> Enum.filter(& &1)
     |> IO.iodata_to_binary()
   end
 
   defp next_step(branch, :cli) do
-    "\nWhen it is fixed: gitastic mr addressed #{branch} <commit> --note \"...\", then gitastic mr wait #{branch}\n"
+    "\nWhen it is fixed: gitastic mr addressed #{branch} <commit> --note \"...\"\n"
   end
 
   defp next_step(branch, :mcp) do
-    "\nWhen it is fixed: call addressed with branch #{branch}, the commit and a note, then wait_for_review.\n"
+    "\nWhen it is fixed: call addressed with branch #{branch}, the commit and a note.\n"
   end
 
-  defp comments(_title, [], _addressed), do: false
-
-  defp comments(title, comments, addressed) do
-    lines =
-      comments
-      |> Enum.group_by(& &1.round)
-      |> Enum.sort()
-      |> Enum.flat_map(fn {round, comments} ->
-        Enum.map(comments, &comment/1) ++
-          for a <- addressed, a.round == round do
-            "  -> addressed in #{a.short}#{if a.note, do: ": " <> a.note, else: ""}\n"
-          end
-      end)
-
-    ["\n#{title}:\n" | lines]
-  end
+  defp listen(branch, :cli), do: "\nKeep listening: gitastic mr wait #{branch}\n"
+  defp listen(_branch, :mcp), do: "\nKeep listening: call wait_for_review again.\n"
 
   defp comment(c) do
     where =

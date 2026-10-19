@@ -48,10 +48,9 @@ defmodule GitasticWeb.ApiController do
       {:ok, outcome} ->
         json(conn, %{
           status: outcome.status,
+          kind: outcome.kind,
           decision: outcome.decision,
           comments: outcome.comments,
-          earlier: outcome.earlier,
-          addressed: outcome.addressed,
           text: Report.outcome(outcome, GitasticWeb.mr_url(branch))
         })
 

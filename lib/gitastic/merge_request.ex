@@ -8,9 +8,14 @@ defmodule Gitastic.MergeRequest do
   waiting agents are not kept, their `wait` asks again.
 
   The review goes in rounds. A comment belongs to the round it was written in
-  (the number of decisions before it); a decision closes its round and tells
-  every waiting agent, with the round's comments; `addressed/4` answers the last
-  decision with a commit and a note, recomputes the diff and opens the next round.
+  (the number of decisions before it); a decision closes its round; `addressed/4`
+  answers the last decision with a commit and a note, recomputes the diff and
+  opens the next round.
+
+  Agents hear every comment and every decision. Each one gets the next number
+  (`seq`), and each agent has a cursor: the last number it was told. `wait/3`
+  answers at once with whatever is past the agent's cursor, or blocks until
+  there is some, so nothing said while an agent re-arms its wait is missed.
 
   Closing doesn't end the process: the merge request is done, `:merged` when its
   last decision was an approval and `:closed` otherwise, and stays to look back
@@ -46,7 +51,9 @@ defmodule Gitastic.MergeRequest do
     commits: [],
     files: [],
     waiters: %{},
-    next_id: 1
+    next_id: 1,
+    seq: 0,
+    cursors: %{}
   ]
 
   ## API
@@ -148,9 +155,10 @@ defmodule Gitastic.MergeRequest do
     do: call(branch, {:addressed, commit, note, by})
 
   @doc """
-  Waits for a decision. When the last decision has not been addressed yet, it is
-  the answer at once; otherwise this blocks until the next decision, the merge
-  request closing, or `timeout` ms, answering `{:ok, outcome}` or `{:ok, :timeout}`.
+  Waits for news for the agent `name`: a comment or a decision it hasn't been
+  told yet, or the merge request closing. Answers at once when there is some;
+  otherwise blocks until there is, or `timeout` ms. Answers `{:ok, outcome}`
+  (`kind` is `:comment`, `:decision` or `:closed`) or `{:ok, :timeout}`.
   """
   def wait(branch, name, timeout) do
     case lookup(branch) do
@@ -187,7 +195,7 @@ defmodule Gitastic.MergeRequest do
   @impl true
   def init({:restore, saved}) do
     # Fields added since it was saved take their defaults.
-    {:ok, struct(__MODULE__, Map.put(saved, :waiters, %{}))}
+    {:ok, struct(__MODULE__, saved |> Map.put(:waiters, %{}) |> number_events())}
   end
 
   def init(attrs) do
@@ -239,7 +247,7 @@ defmodule Gitastic.MergeRequest do
 
   def handle_call({:wait, name, _timeout}, _from, %{status: status} = state)
       when status in [:merged, :closed] do
-    {:reply, {:ok, outcome(register(state, name))}, state}
+    {:reply, {:ok, closed_outcome(register(state, name))}, state}
   end
 
   def handle_call(:close, _from, %{status: status} = state) when status in [:merged, :closed] do
@@ -266,11 +274,18 @@ defmodule Gitastic.MergeRequest do
           side: attrs[:side] || "new",
           commit: blank_to_nil(attrs[:commit]),
           round: length(state.decisions),
+          seq: state.seq + 1,
           at: DateTime.utc_now()
         }
 
-        state = %{state | comments: state.comments ++ [comment], next_id: state.next_id + 1}
-        {:reply, {:ok, comment}, changed(state)}
+        state = %{
+          state
+          | comments: state.comments ++ [comment],
+            next_id: state.next_id + 1,
+            seq: state.seq + 1
+        }
+
+        {:reply, {:ok, comment}, changed(tell_waiters(state))}
     end
   end
 
@@ -287,11 +302,18 @@ defmodule Gitastic.MergeRequest do
         by: by,
         head: state.head,
         round: round,
+        seq: state.seq + 1,
         at: DateTime.utc_now()
       }
 
-      state = %{state | decisions: state.decisions ++ [decision], status: verdict}
-      state = changed(tell_waiters(state, outcome(state)))
+      state = %{
+        state
+        | decisions: state.decisions ++ [decision],
+          status: verdict,
+          seq: state.seq + 1
+      }
+
+      state = changed(tell_waiters(state))
       {:reply, {:ok, decision}, state}
     end
   end
@@ -321,10 +343,13 @@ defmodule Gitastic.MergeRequest do
   end
 
   def handle_call({:wait, name, timeout}, {pid, _} = from, state) do
+    name = blank_to_nil(name) || "agent"
     state = register(state, name)
 
-    if state.status in [:approved, :needs_work] do
-      {:reply, {:ok, outcome(state)}, state}
+    if news?(state, name) do
+      {outcome, state} = tell(state, name)
+      Gitastic.Store.put(saved(state))
+      {:reply, {:ok, outcome}, state}
     else
       ref = Process.monitor(pid)
       timer = Process.send_after(self(), {:wait_timeout, ref}, timeout)
@@ -336,7 +361,14 @@ defmodule Gitastic.MergeRequest do
     approved? = match?(%{verdict: :approved}, List.last(state.decisions))
     status = if approved?, do: :merged, else: :closed
     state = %{state | status: status, done_at: DateTime.utc_now()}
-    state = changed(tell_waiters(state, outcome(state)))
+
+    for {ref, {from, timer, _name}} <- state.waiters do
+      Process.cancel_timer(timer)
+      Process.demonitor(ref, [:flush])
+      GenServer.reply(from, {:ok, closed_outcome(state)})
+    end
+
+    state = changed(%{state | waiters: %{}})
     {:reply, {:ok, status}, state}
   end
 
@@ -376,30 +408,71 @@ defmodule Gitastic.MergeRequest do
     end
   end
 
-  defp tell_waiters(state, outcome) do
-    for {ref, {from, timer, _name}} <- state.waiters do
+  # Tells every waiting agent its news, moving each one's cursor past it.
+  defp tell_waiters(state) do
+    Enum.reduce(state.waiters, %{state | waiters: %{}}, fn {ref, {from, timer, name}}, state ->
       Process.cancel_timer(timer)
       Process.demonitor(ref, [:flush])
+      {outcome, state} = tell(state, name)
       GenServer.reply(from, {:ok, outcome})
-    end
-
-    %{state | waiters: %{}}
+      state
+    end)
   end
 
-  # What a waiting agent is told: the decision (nil when closed), the comments
-  # of its round, and every comment before it.
-  defp outcome(state) do
-    decision = List.last(state.decisions)
-    round = if decision, do: decision.round, else: length(state.decisions)
+  defp news?(state, name), do: Map.get(state.cursors, name, 0) < state.seq
 
-    %{
+  # What `name` hasn't been told yet: the comments since its cursor, and the
+  # latest decision since then, if any. Moves its cursor to now.
+  defp tell(state, name) do
+    cursor = Map.get(state.cursors, name, 0)
+    decision = state.decisions |> Enum.filter(&(&1.seq > cursor)) |> List.last()
+
+    outcome = %{
       branch: state.branch,
       status: state.status,
+      kind: if(decision, do: :decision, else: :comment),
       decision: decision,
-      comments: Enum.filter(state.comments, &(&1.round == round)),
-      earlier: Enum.filter(state.comments, &(&1.round < round)),
-      addressed: state.addressed
+      comments: Enum.filter(state.comments, &(&1.seq > cursor))
     }
+
+    {outcome, %{state | cursors: Map.put(state.cursors, name, state.seq)}}
+  end
+
+  defp closed_outcome(state) do
+    %{branch: state.branch, status: state.status, kind: :closed, decision: nil, comments: []}
+  end
+
+  # A merge request saved before comments and decisions were numbered: number
+  # them in the order they happened, and start each agent where the old rule
+  # left it (told everything, or, while a decision is unanswered, that round).
+  defp number_events(%{seq: _} = saved), do: saved
+
+  defp number_events(saved) do
+    events =
+      (Enum.map(saved.comments, &{:comment, &1}) ++ Enum.map(saved.decisions, &{:decision, &1}))
+      |> Enum.sort_by(&elem(&1, 1).at, DateTime)
+      |> Enum.with_index(1)
+
+    numbered = fn type -> for {{^type, e}, n} <- events, do: Map.put(e, :seq, n) end
+    decisions = numbered.(:decision)
+    seq = length(events)
+
+    cursor =
+      if saved.status in [:approved, :needs_work] do
+        case Enum.take(decisions, -2) do
+          [previous, _last] -> previous.seq
+          _ -> 0
+        end
+      else
+        seq
+      end
+
+    Map.merge(saved, %{
+      comments: numbered.(:comment),
+      decisions: decisions,
+      seq: seq,
+      cursors: Map.new(saved.agents, &{&1, cursor})
+    })
   end
 
   # Recomputes the commits and the diff of the branch from git.

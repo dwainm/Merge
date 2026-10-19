@@ -49,7 +49,7 @@ defmodule Gitastic.MergeRequestTest do
     assert message =~ "no-such-branch"
   end
 
-  test "every waiting agent is told the decision, with the round's comments", c do
+  test "a comment wakes every waiting agent, and the next wait returns only what is new", c do
     a = Task.async(fn -> MergeRequest.wait(c.branch, "agent-a", 5_000) end)
     b = Task.async(fn -> MergeRequest.wait(c.branch, "agent-b", 5_000) end)
     wait_for_waiters(c.branch, 2)
@@ -57,20 +57,31 @@ defmodule Gitastic.MergeRequestTest do
     {:ok, _} =
       MergeRequest.comment(c.branch, %{body: "Why empty?", path: "lib/app.ex", line: 2})
 
+    for task <- [a, b] do
+      assert {:ok, %{kind: :comment, comments: [%{body: "Why empty?", line: 2}]}} =
+               Task.await(task)
+    end
+
+    # Said while agent-a re-arms: not missed, and the first comment isn't repeated.
+    {:ok, _} = MergeRequest.comment(c.branch, %{body: "And the test?"})
     {:ok, _} = MergeRequest.decide(c.branch, :needs_work, "Keep hello.")
 
-    for task <- [a, b] do
-      assert {:ok, %{status: :needs_work, decision: decision, comments: [comment]}} =
-               Task.await(task)
+    assert {:ok, %{kind: :decision, decision: %{verdict: :needs_work}, comments: [only]}} =
+             MergeRequest.wait(c.branch, "agent-a", 5_000)
 
-      assert %{verdict: :needs_work, body: "Keep hello."} = decision
-      assert %{body: "Why empty?", path: "lib/app.ex", line: 2} = comment
-    end
+    assert only.body == "And the test?"
+
+    # Nothing new since: the next wait blocks.
+    assert {:ok, :timeout} = MergeRequest.wait(c.branch, "agent-a", 50)
   end
 
-  test "a decision not yet addressed is the answer to wait at once", c do
+  test "an agent that hasn't heard anything yet gets it all at once", c do
+    {:ok, _} = MergeRequest.comment(c.branch, %{body: "Fine."})
     {:ok, _} = MergeRequest.decide(c.branch, :approved)
-    assert {:ok, %{status: :approved}} = MergeRequest.wait(c.branch, "late-agent", 5_000)
+
+    assert {:ok, %{kind: :decision, status: :approved, comments: [%{body: "Fine."}]}} =
+             MergeRequest.wait(c.branch, "late-agent", 5_000)
+
     assert {:ok, %{agents: ["agent-a", "late-agent"]}} = MergeRequest.get(c.branch)
   end
 
@@ -82,6 +93,7 @@ defmodule Gitastic.MergeRequestTest do
   test "addressed answers the decision with a commit, recomputes the diff and waits again", c do
     {:ok, _} = MergeRequest.comment(c.branch, %{body: "Keep hello."})
     {:ok, _} = MergeRequest.decide(c.branch, :needs_work)
+    assert {:ok, %{kind: :decision}} = MergeRequest.wait(c.branch, "agent-a", 5_000)
     Phoenix.PubSub.subscribe(Gitastic.PubSub, MergeRequest.topic(c.branch))
 
     sha =
@@ -99,15 +111,14 @@ defmodule Gitastic.MergeRequestTest do
     # Back to the same content as main, so nothing left to diff.
     assert mr.files == []
 
-    # The old decision is answered: wait blocks until the next one.
+    # Heard already: wait blocks until there is news.
     assert {:ok, :timeout} = MergeRequest.wait(c.branch, "agent-a", 50)
 
     task = Task.async(fn -> MergeRequest.wait(c.branch, "agent-a", 5_000) end)
     wait_for_waiters(c.branch, 1)
     {:ok, _} = MergeRequest.decide(c.branch, :approved, "Good.")
 
-    assert {:ok, %{status: :approved, comments: [], earlier: [%{body: "Keep hello."}]}} =
-             Task.await(task)
+    assert {:ok, %{kind: :decision, status: :approved, comments: []}} = Task.await(task)
   end
 
   test "addressed refuses a commit that is not on the branch", c do

@@ -54,12 +54,15 @@ defmodule GitasticWeb.MergeRequestLiveTest do
 
     view |> form("#line-comment-form", line: %{body: "Why?"}) |> render_submit()
 
+    assert {:ok, %{kind: :comment, comments: [%{body: "Why?", line: 2, side: "old"}]}} =
+             Task.await(waiter)
+
     view
     |> form("#decision-form", decision: %{body: "Keep hello."})
     |> render_submit(%{verdict: "reject"})
 
-    assert {:ok, %{status: :needs_work, comments: [%{body: "Why?", line: 2, side: "old"}]}} =
-             Task.await(waiter)
+    assert {:ok, %{kind: :decision, decision: %{verdict: :needs_work}, comments: []}} =
+             MergeRequest.wait(c.branch, "agent", 5_000)
 
     assert has_element?(view, "#decision-0", "Needs work")
     assert has_element?(view, "#file-0", "Why?")

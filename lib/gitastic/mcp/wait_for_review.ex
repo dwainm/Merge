@@ -1,8 +1,9 @@
 defmodule Gitastic.MCP.WaitForReview do
   @moduledoc """
-  Waits for the reviewer's decision on a merge request and returns it with every
-  comment: APPROVED, or NEEDS WORK with what to fix. Returns at once when the
-  last decision hasn't been addressed yet. Holds up to 5 minutes; when it answers
+  Waits for news on a merge request and returns it: each new COMMENT (file, line
+  and text), or the decision, APPROVED or NEEDS WORK, with the comments since you
+  last heard. Returns at once when there is news you haven't heard. Call it again
+  after each answer to keep listening. Holds up to 5 minutes; when it answers
   "Still waiting", call it again.
   """
 
@@ -12,12 +13,15 @@ defmodule Gitastic.MCP.WaitForReview do
 
   schema do
     field(:branch, {:required, :string}, description: "The merge request's branch")
-    field(:as, :string, description: "Your name, shown to the reviewer")
+
+    field(:as, {:required, :string},
+      description: "Your name: each name hears each comment and decision once"
+    )
   end
 
   @impl true
   def execute(params, frame) do
-    case MergeRequest.wait(params.branch, params[:as] || "mcp", Gitastic.MCP.wait_ms()) do
+    case MergeRequest.wait(params.branch, params.as, Gitastic.MCP.wait_ms()) do
       {:ok, :timeout} ->
         Gitastic.MCP.reply(
           "Still waiting for a review of #{params.branch}. Call wait_for_review again.",
