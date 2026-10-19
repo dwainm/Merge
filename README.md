@@ -39,7 +39,8 @@ they match, else the commits on either side, a diff page, and **Push** or **Pull
 A push is checked by fetching again; a success shows for a few seconds, a failure
 stays until the next push. Every
 minute the server fetches, refreshes this, and marks merge requests whose branch
-is on main as "Merged, not pushed", then "On GitHub" once origin/main has it.
+is on main as "Merged", then "On origin" once origin/main has it. The badges: Review,
+Needs work, Approved, Merged, On origin, Closed.
 
 ## MCP
 

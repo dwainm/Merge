@@ -222,8 +222,8 @@ defmodule GitasticWeb.MergeRequestLive do
           <p class="font-medium">{merged_line(@mr.merged)}</p>
           <p class="mt-0.5 text-xs opacity-80">
             {ago(@mr.merged.date)} · {if @mr.merged.pushed,
-              do: "On GitHub in #{@mr.merged.short}",
-              else: "Not pushed to GitHub yet"} · the diff is as it was then.
+              do: "On origin in #{@mr.merged.short}",
+              else: "Not pushed to origin yet"} · the diff is as it was then.
           </p>
         <% else %>
           {status_label(@mr.status)} {ago(@mr.done_at)}. Kept to look back at: the diff is as it was then.

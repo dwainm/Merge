@@ -12,7 +12,7 @@ defmodule Gitastic.Report do
   def outcome(o, url, via \\ :cli)
 
   def outcome(%{kind: :closed, merged: %{} = m} = o, url, _via) do
-    where = if m.pushed, do: "On GitHub.", else: "Merged into main, not pushed yet."
+    where = if m.pushed, do: "On origin.", else: "Merged into main, not pushed yet."
     "MERGED #{m.short}: #{o.branch}\n#{url}\n\n#{m.short} #{m.subject}\n#{where}\n"
   end
 

@@ -23,11 +23,11 @@ defmodule GitasticWeb.MergeRequestComponents do
   end
 
   def status_label(status, merged \\ nil)
-  def status_label(:merged, %{pushed: true}), do: "On GitHub"
-  def status_label(:merged, %{pushed: false}), do: "Merged, not pushed"
+  def status_label(:merged, %{pushed: true}), do: "On origin"
+  def status_label(:merged, %{pushed: false}), do: "Merged"
   def status_label(status, _merged), do: base_label(status)
 
-  defp base_label(:open), do: "In review"
+  defp base_label(:open), do: "Review"
   defp base_label(:approved), do: "Approved"
   defp base_label(:needs_work), do: "Needs work"
   defp base_label(:merged), do: "Merged"

@@ -86,7 +86,7 @@ defmodule Gitastic.CLI do
   defp command(["mr", "merged", branch], opts) do
     with {:ok, %{"merged" => m, "url" => url}} <-
            post("/api/merged", %{branch: branch, commit: opts[:commit]}) do
-      where = if m["pushed"], do: "on GitHub", else: "not pushed yet"
+      where = if m["pushed"], do: "on origin", else: "not pushed yet"
       IO.puts("Merged #{branch} in #{m["short"]}: #{m["subject"]} (#{where})\n#{url}")
     end
   end
@@ -111,8 +111,8 @@ defmodule Gitastic.CLI do
 
         merged =
           case mr["merged"] do
-            %{"short" => short, "pushed" => true} -> " on GitHub in #{short}"
-            %{"short" => short} -> " in #{short}, not pushed"
+            %{"short" => short, "pushed" => true} -> " on origin in #{short}"
+            %{"short" => short} -> " in #{short}"
             _ -> ""
           end
 
@@ -127,7 +127,7 @@ defmodule Gitastic.CLI do
 
   defp command(_args, _opts), do: {:error, @usage}
 
-  defp state("open"), do: "open"
+  defp state("open"), do: "review"
   defp state("needs_work"), do: "needs work"
   defp state("approved"), do: "approved"
   defp state("merged"), do: "merged"
