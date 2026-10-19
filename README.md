@@ -29,6 +29,16 @@ No GitHub and no database: each merge request is a process, gone when the server
     gitastic mr list
         gitastic mr list                   # checkin  open  Coffee shop check-in  (waiting: checkin)  <url>
 
+    gitastic mr watch [--since TIME]
+        gitastic mr watch --since 2h       # 2026-10-19T14:03:22Z comment checkin lib/app.ex:12 reviewer: Why?
+
+`mr watch` prints one line per event, as it happens, and never returns: `opened`, `comment`,
+`approved`, `needs-work`, `addressed`, `new-commits`, `conflicts`, `merges-cleanly`, `rewritten`,
+`branch-gone`, `merged`, `on-origin`, `closed`, and for `main`: `main-tip`, `checks-running`,
+`checks-passed`, `checks-failed`, `pushed`, `push-failed`. The lines are kept in
+`~/.gitastic/events.log`; `--since` (a time, or an age like `30m`) replays them. It reconnects
+after a server restart and carries on from the last line it printed. MCP: `watch_events`.
+
 The commands find the server through `~/.gitastic/url` (`GITASTIC_URL` overrides it).
 
 ## main against GitHub
@@ -64,7 +74,7 @@ several), wait for "Checks passed" on the tip, then Push from the home page.
 
     claude mcp add --transport http gitastic http://localhost:4747/mcp
 
-Tools: `open_merge_request`, `wait_for_review`, `addressed`, `close_merge_request`, `list_merge_requests`.
+Tools: `open_merge_request`, `wait_for_review`, `addressed`, `close_merge_request`, `list_merge_requests`, `watch_events`.
 Use the service's port (4747), or the one `gitastic serve` printed.
 
 ## The service

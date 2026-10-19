@@ -42,7 +42,7 @@ defmodule Gitastic.MergeRequest do
 
   use GenServer, restart: :temporary
 
-  alias Gitastic.Git
+  alias Gitastic.{Events, Git}
 
   @list_topic "merge_requests"
 
@@ -271,6 +271,14 @@ defmodule Gitastic.MergeRequest do
         |> merge_check()
 
       Gitastic.Store.put(saved(state))
+
+      Events.emit(
+        "opened",
+        branch,
+        "#{state.title} (#{length(state.commits)} commits) by #{opened_by}"
+      )
+
+      emit_changes(%{state | merge_check: nil}, state)
       broadcast_list()
       {:ok, state}
     else
@@ -317,6 +325,7 @@ defmodule Gitastic.MergeRequest do
 
           {:ok, info} ->
             newly? = state.status != :merged or state.merged == nil
+            was_pushed? = match?(%{pushed: true}, state.merged)
 
             state = %{
               state
@@ -324,6 +333,11 @@ defmodule Gitastic.MergeRequest do
                 merged: info,
                 done_at: state.done_at || DateTime.utc_now()
             }
+
+            if newly?, do: Events.emit("merged", state.branch, merged_detail(info))
+
+            if info.pushed and not was_pushed?,
+              do: Events.emit("on-origin", state.branch, merged_detail(info))
 
             state = if newly?, do: tell_closed(state), else: state
             {:reply, {:ok, info}, changed(state)}
@@ -358,6 +372,8 @@ defmodule Gitastic.MergeRequest do
 
           state |> refresh() |> Map.put(:branch_state, moved) |> merge_check()
       end
+
+    emit_changes(state, next)
 
     cond do
       next == state -> {:reply, :ok, state}
@@ -401,6 +417,7 @@ defmodule Gitastic.MergeRequest do
             seq: state.seq + 1
         }
 
+        Events.emit("comment", state.branch, "#{where(comment)} #{comment.author}: #{body}")
         {:reply, {:ok, comment}, changed(tell_waiters(state))}
     end
   end
@@ -429,6 +446,10 @@ defmodule Gitastic.MergeRequest do
           seq: state.seq + 1
       }
 
+      event = if verdict == :approved, do: "approved", else: "needs-work"
+      by = if by, do: "#{by}: ", else: ""
+      Events.emit(event, state.branch, "at #{Events.short(state.head)} #{by}#{body}")
+
       state = changed(tell_waiters(state))
       {:reply, {:ok, decision}, state}
     end
@@ -456,6 +477,9 @@ defmodule Gitastic.MergeRequest do
         |> Map.put(:branch_state, :ok)
         |> merge_check()
 
+      note = if entry.note, do: ": #{entry.note}", else: ""
+      Events.emit("addressed", state.branch, "#{entry.short} #{entry.by}#{note}")
+      emit_changes(before, state)
       state = if state.seq > before.seq, do: tell_waiters(state), else: state
       {:reply, {:ok, entry}, changed(state)}
     else
@@ -486,6 +510,8 @@ defmodule Gitastic.MergeRequest do
     approved? = match?(%{verdict: :approved}, List.last(state.decisions))
     status = if approved?, do: :merged, else: :closed
     state = %{state | status: status, done_at: DateTime.utc_now()}
+    detail = if approved?, do: "approved, kept as merged: #{state.title}", else: state.title
+    Events.emit("closed", state.branch, detail)
     state = changed(tell_closed(state))
     {:reply, {:ok, status}, state}
   end
@@ -740,6 +766,63 @@ defmodule Gitastic.MergeRequest do
   end
 
   defp note_conflicts(state, _result, _into, _target_sha), do: state
+
+  # The events a look at the branch turned up: new commits, a rewrite or a
+  # deletion, and the trial merge starting or stopping to conflict.
+  defp emit_changes(old, new) do
+    branch = new.branch
+    old_state = Map.get(old, :branch_state, :ok)
+    new_state = Map.get(new, :branch_state, :ok)
+    old_result = with %{result: r} <- Map.get(old, :merge_check), do: r
+    new_result = with %{result: r} <- Map.get(new, :merge_check), do: r
+
+    cond do
+      new_state == :gone and old_state != :gone ->
+        Events.emit("branch-gone", branch, "last seen at #{Events.short(old.head)}")
+
+      match?({:rewritten, _}, new_state) and new.head != old.head ->
+        Events.emit("rewritten", branch, "#{Events.short(old.head)} → #{Events.short(new.head)}")
+
+      new.head != old.head ->
+        seen = MapSet.new(old.commits, & &1.sha)
+        fresh = Enum.reject(new.commits, &MapSet.member?(seen, &1.sha))
+        latest = List.first(new.commits)
+        subject = if latest, do: " #{latest.subject}", else: ""
+
+        Events.emit(
+          "new-commits",
+          branch,
+          "#{length(fresh)} → #{Events.short(new.head)}#{subject}"
+        )
+
+      true ->
+        :ok
+    end
+
+    case {old_result, new_result} do
+      {same, same} ->
+        :ok
+
+      {_, {:conflicts, files}} ->
+        %{into: into, target: target} = new.merge_check
+        detail = "into #{into} (#{Events.short(target)}): #{Enum.join(files, ", ")}"
+        Events.emit("conflicts", branch, detail)
+
+      {{:conflicts, _}, :clean} ->
+        Events.emit("merges-cleanly", branch, "into #{new.merge_check.into}")
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp where(%{path: path, line: line, side: side}) when is_binary(path) and line != nil,
+    do: "#{path}:#{line}#{if side == "old", do: " (old)", else: ""}"
+
+  defp where(%{path: path}) when is_binary(path), do: path
+  defp where(_comment), do: "general"
+
+  defp merged_detail(info), do: "#{info.short} #{info.subject}"
 
   # What is written to disk: everything but the waiting agents.
   defp saved(state), do: state |> Map.from_struct() |> Map.delete(:waiters)

@@ -16,6 +16,8 @@ defmodule Gitastic.CLI do
   gitastic mr merged <branch> [--commit SHA]  marks it merged (found on main when no --commit)
   gitastic mr close <branch>
   gitastic mr list
+  gitastic mr watch [--since TIME]           one line per event on any merge request or main, until stopped;
+                                             TIME is 2026-10-19T14:00:00Z or an age like 30m, 2h, 1d
   """
 
   @switches [
@@ -27,7 +29,8 @@ defmodule Gitastic.CLI do
     as: :string,
     note: :string,
     port: :integer,
-    commit: :string
+    commit: :string,
+    since: :string
   ]
 
   def usage, do: @usage
@@ -134,7 +137,97 @@ defmodule Gitastic.CLI do
     end
   end
 
+  defp command(["mr", "watch"], opts) do
+    with {:ok, since} <- since(opts[:since]) do
+      watch(since || DateTime.utc_now(), false)
+    end
+  end
+
   defp command(_args, _opts), do: {:error, @usage}
+
+  # Streams the event lines, printing each as it comes. When the stream ends
+  # (a restart, a dropped connection) it connects again and asks for what
+  # came after the last line it printed, so nothing is missed or repeated.
+  defp watch(since, retrying?) do
+    Process.put(:watch, %{buffer: "", last: since})
+    # Read each time: a restarted server may be on another port.
+    base = with {:ok, base} <- server_url(), do: base, else: (_ -> nil)
+
+    result =
+      base &&
+        Req.get(base <> "/api/events",
+          params: [since: DateTime.to_iso8601(since)],
+          receive_timeout: 60_000,
+          retry: false,
+          into: fn {:data, data}, acc ->
+            watch_data(data)
+            {:cont, acc}
+          end
+        )
+
+    last = Process.get(:watch).last
+
+    retrying? =
+      case result do
+        {:ok, %{status: 200}} ->
+          false
+
+        {:ok, %{status: status}} ->
+          IO.puts(:stderr, "The server answered #{status}. Trying again until it is back.")
+          true
+
+        _ ->
+          unless retrying?,
+            do: IO.puts(:stderr, "No gitastic server. Trying again until it is back.")
+
+          true
+      end
+
+    Process.sleep(3_000)
+    watch(last, retrying?)
+  end
+
+  defp watch_data(data) do
+    %{buffer: buffer, last: last} = Process.get(:watch)
+    [rest | lines] = String.split(buffer <> data, "\n") |> Enum.reverse()
+
+    last =
+      lines
+      |> Enum.reverse()
+      |> Enum.reject(&(&1 == ""))
+      |> Enum.reduce(last, fn line, last ->
+        case Gitastic.Events.time(line) do
+          nil ->
+            last
+
+          time ->
+            [_stamp, rest] = String.split(line, " ", parts: 2)
+            IO.puts("#{time |> DateTime.truncate(:second) |> DateTime.to_iso8601()} #{rest}")
+            time
+        end
+      end)
+
+    Process.put(:watch, %{buffer: rest, last: last})
+  end
+
+  defp since(nil), do: {:ok, nil}
+
+  defp since(text) do
+    case Regex.run(~r/^(\d+)([smhd])$/, text) do
+      [_, n, unit] ->
+        seconds = String.to_integer(n) * %{"s" => 1, "m" => 60, "h" => 3600, "d" => 86_400}[unit]
+        {:ok, DateTime.add(DateTime.utc_now(), -seconds)}
+
+      nil ->
+        case DateTime.from_iso8601(text) do
+          {:ok, time, _} ->
+            {:ok, time}
+
+          {:error, _} ->
+            {:error, "--since takes a time like 2026-10-19T14:00:00Z, or an age like 30m."}
+        end
+    end
+  end
 
   defp state("open"), do: "review"
   defp state("needs_work"), do: "review"

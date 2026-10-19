@@ -22,6 +22,7 @@ defmodule Gitastic.MCP do
   component(Gitastic.MCP.Addressed, name: "addressed")
   component(Gitastic.MCP.CloseMergeRequest, name: "close_merge_request")
   component(Gitastic.MCP.ListMergeRequests, name: "list_merge_requests")
+  component(Gitastic.MCP.WatchEvents, name: "watch_events")
 
   @impl true
   def init(_client_info, frame), do: {:ok, frame}

@@ -39,6 +39,7 @@ defmodule GitasticWeb.Router do
     post "/addressed", ApiController, :addressed
     post "/merged", ApiController, :merged
     post "/close", ApiController, :close
+    get "/events", EventsController, :index
   end
 
   # Screenshots named in a merge request's body, read-only.

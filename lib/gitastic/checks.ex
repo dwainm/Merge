@@ -142,6 +142,7 @@ defmodule Gitastic.Checks do
           ])
 
         timer = Process.send_after(self(), {:timeout, sha}, @timeout_ms)
+        Gitastic.Events.emit("checks-running", "main", Gitastic.Events.short(sha))
         run = %{sha: sha, port: port, started_at: started_at, log: [], timer: timer}
         %{state | running: run}
 
@@ -173,6 +174,10 @@ defmodule Gitastic.Checks do
 
     if state.store, do: Gitastic.Store.put_named(state.store, results)
     broadcast(run.sha)
+
+    seconds = DateTime.diff(result.finished_at, run.started_at)
+    event = if ok?, do: "checks-passed", else: "checks-failed"
+    Gitastic.Events.emit(event, "main", "#{Gitastic.Events.short(run.sha)} in #{seconds}s")
     state = %{state | results: results, running: nil}
 
     case state.next do

@@ -9,7 +9,7 @@ defmodule Gitastic.Drift do
   the next push; a success shows for a few seconds.
   """
 
-  alias Gitastic.{Git, MergeRequest}
+  alias Gitastic.{Events, Git, MergeRequest}
 
   def topic, do: "drift"
 
@@ -69,8 +69,31 @@ defmodule Gitastic.Drift do
     }
 
     Gitastic.Store.put_named("last_push", result)
+
+    if result.ok,
+      do:
+        Events.emit(
+          "pushed",
+          "main",
+          "#{length(ahead)} commits, origin at #{Events.short(result.origin)}"
+        ),
+      else: Events.emit("push-failed", "main", result.output)
+
     after_git(repo, result)
   end
+
+  # A new tip of main since the last read (none on the first read after a start).
+  defp emit_tip(%{main: old}, %{main: new} = drift) when old != new do
+    subject =
+      case Git.commit_info(drift.repo, new) do
+        {:ok, %{subject: s}} -> " " <> s
+        _ -> ""
+      end
+
+    Events.emit("main-tip", "main", "#{Events.short(old)} → #{Events.short(new)}#{subject}")
+  end
+
+  defp emit_tip(_old, _new), do: :ok
 
   @doc "The last push's result, or nil."
   def last_push, do: Gitastic.Store.get_named("last_push")
@@ -106,6 +129,7 @@ defmodule Gitastic.Drift do
   @doc "Reads the drift and main's CI, keeps it as current and broadcasts it."
   def refresh(repo \\ repo()) do
     drift = with %{} = d <- read(repo), do: Map.put(d, :ci, ci(repo))
+    emit_tip(current(), drift)
     put_current(drift)
     broadcast(drift)
     drift
