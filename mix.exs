@@ -75,7 +75,8 @@ defmodule Gitastic.MixProject do
       {:makeup_json, "~> 1.0"},
       {:makeup_css, "~> 0.2.3"},
       {:makeup_sql, "~> 0.1.3"},
-      {:anubis_mcp, "~> 2.2"}
+      {:anubis_mcp, "~> 2.2"},
+      {:mdex, "~> 0.14.2"}
     ]
   end
 

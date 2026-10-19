@@ -11,7 +11,9 @@ defmodule GitasticWeb.MergeRequestComponents do
       "shrink-0 rounded-full px-2 py-0.5 text-xs font-medium",
       @status == :open && "bg-sky-100 text-sky-800",
       @status == :approved && "bg-emerald-100 text-emerald-800",
-      @status == :needs_work && "bg-amber-100 text-amber-800"
+      @status == :needs_work && "bg-amber-100 text-amber-800",
+      @status == :merged && "bg-violet-100 text-violet-800",
+      @status == :closed && "bg-zinc-200 text-zinc-700"
     ]}>
       {status_label(@status)}
     </span>
@@ -21,6 +23,7 @@ defmodule GitasticWeb.MergeRequestComponents do
   def status_label(:open), do: "In review"
   def status_label(:approved), do: "Approved"
   def status_label(:needs_work), do: "Needs work"
+  def status_label(:merged), do: "Merged"
   def status_label(:closed), do: "Closed"
 
   @doc "The key a line comment is anchored to on the page."

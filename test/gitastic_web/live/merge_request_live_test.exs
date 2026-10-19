@@ -14,12 +14,19 @@ defmodule GitasticWeb.MergeRequestLiveTest do
     %{branch: branch, repo: repo, first: first}
   end
 
-  test "the home page lists open merge requests and drops closed ones", %{conn: conn} = c do
+  test "the home page lists open merge requests, and closed ones at the bottom",
+       %{conn: conn} = c do
     {:ok, view, _html} = live(conn, ~p"/")
-    assert has_element?(view, "#mr-#{c.branch}", "Empty it")
+    assert has_element?(view, "#merge-requests #mr-#{c.branch}", "Empty it")
 
     MergeRequest.close(c.branch)
-    refute has_element?(view, "#mr-#{c.branch}")
+    refute has_element?(view, "#merge-requests #mr-#{c.branch}")
+    assert has_element?(view, "#done-merge-requests #mr-#{c.branch}", "Closed")
+
+    {:ok, page, _html} = live(conn, GitasticWeb.mr_path(c.branch))
+    assert has_element?(page, "#done-banner")
+    assert has_element?(page, "#file-0")
+    refute has_element?(page, "#decision-form")
   end
 
   test "the diff, the commits, and one commit alone", %{conn: conn} = c do

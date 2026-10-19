@@ -1,6 +1,6 @@
 defmodule Gitastic.MergeRequest do
   @moduledoc """
-  One process per open merge request, registered by branch. It holds everything
+  One process per merge request, registered by branch. It holds everything
   about the merge request (there is no database): the branch and base, title,
   body, who opened it, the comments, the decisions, what was addressed, the
   commits and the current diff, and the agents waiting to hear a decision.
@@ -9,6 +9,11 @@ defmodule Gitastic.MergeRequest do
   (the number of decisions before it); a decision closes its round and tells
   every waiting agent, with the round's comments; `addressed/4` answers the last
   decision with a commit and a note, recomputes the diff and opens the next round.
+
+  Closing doesn't end the process: the merge request is done, `:merged` when its
+  last decision was an approval and `:closed` otherwise, and stays to look back
+  at, read-only, with the diff as it was, until the server stops or the branch
+  is opened again.
 
   Every change is broadcast on `topic(branch)` as `{:merge_request, mr}`, and
   `"merge_requests"` hears `:merge_requests_changed` when one opens, changes or closes.
@@ -30,6 +35,7 @@ defmodule Gitastic.MergeRequest do
     :opened_at,
     :head,
     :merge_base,
+    :done_at,
     status: :open,
     agents: [],
     comments: [],
@@ -46,10 +52,13 @@ defmodule Gitastic.MergeRequest do
   def topic(branch), do: "merge_request:" <> branch
   def list_topic, do: @list_topic
 
+  @doc "True once a merge request is merged or closed."
+  def done?(%{status: status}), do: status in [:merged, :closed]
+
   @doc """
   Opens a merge request for `attrs.branch` in `attrs.repo`, or, when one is
-  already open for the branch, registers the opener on it. Returns
-  `{:ok, mr, :opened | :existing}`.
+  already open for the branch, registers the opener on it. A done one for the
+  branch makes way for the new one. Returns `{:ok, mr, :opened | :existing}`.
   """
   def open(attrs) do
     attrs = Map.new(attrs)
@@ -57,8 +66,10 @@ defmodule Gitastic.MergeRequest do
 
     case lookup(branch) do
       {:ok, pid} ->
-        GenServer.call(pid, {:register, attrs[:opened_by]})
-        {:ok, get!(branch), :existing}
+        case GenServer.call(pid, {:register, attrs[:opened_by]}) do
+          :ok -> {:ok, get!(branch), :existing}
+          :done -> open(attrs)
+        end
 
       :error ->
         case DynamicSupervisor.start_child(Gitastic.MergeRequests, {__MODULE__, attrs}) do
@@ -73,7 +84,7 @@ defmodule Gitastic.MergeRequest do
     GenServer.start_link(__MODULE__, attrs, name: via(attrs.branch))
   end
 
-  @doc "Every open merge request, oldest first."
+  @doc "Every merge request: the open ones oldest first, then the done ones, latest first."
   def list do
     Gitastic.Registry
     |> Registry.select([{{:"$1", :_, :_}, [], [:"$1"]}])
@@ -83,7 +94,11 @@ defmodule Gitastic.MergeRequest do
         :error -> []
       end
     end)
-    |> Enum.sort_by(& &1.opened_at, DateTime)
+    |> Enum.split_with(&(not done?(&1)))
+    |> then(fn {open, done} ->
+      Enum.sort_by(open, & &1.opened_at, DateTime) ++
+        Enum.sort_by(done, & &1.done_at, {:desc, DateTime})
+    end)
   end
 
   @doc "The merge request for a branch; `waiting` names the agents blocked in `wait/3`."
@@ -129,7 +144,7 @@ defmodule Gitastic.MergeRequest do
     :exit, _ -> {:error, :not_found}
   end
 
-  @doc "Ends the merge request: waiting agents are told it closed, and the process stops."
+  @doc "Marks it merged (when approved) or closed, and tells the waiting agents. It stays, read-only."
   def close(branch), do: call(branch, :close)
 
   defp call(branch, msg) do
@@ -185,8 +200,30 @@ defmodule Gitastic.MergeRequest do
   @impl true
   def handle_call(:get, _from, state), do: {:reply, {:ok, public(state)}, state}
 
+  # A done merge request steps aside for a new one on the same branch: it
+  # unregisters itself before it stops, so the branch is free at once.
+  def handle_call({:register, _name}, _from, %{status: status} = state)
+      when status in [:merged, :closed] do
+    Registry.unregister(Gitastic.Registry, state.branch)
+    {:stop, :normal, :done, state}
+  end
+
   def handle_call({:register, name}, _from, state) do
     {:reply, :ok, register(state, name)}
+  end
+
+  def handle_call({:wait, name, _timeout}, _from, %{status: status} = state)
+      when status in [:merged, :closed] do
+    {:reply, {:ok, outcome(register(state, name))}, state}
+  end
+
+  def handle_call(:close, _from, %{status: status} = state) when status in [:merged, :closed] do
+    {:reply, {:ok, status}, state}
+  end
+
+  def handle_call(msg, _from, %{status: status} = state)
+      when status in [:merged, :closed] and elem(msg, 0) in [:comment, :decide, :addressed] do
+    {:reply, {:error, "This merge request is #{status}."}, state}
   end
 
   def handle_call({:comment, attrs}, _from, state) do
@@ -271,12 +308,11 @@ defmodule Gitastic.MergeRequest do
   end
 
   def handle_call(:close, _from, state) do
-    state = %{state | status: :closed}
-    state = tell_waiters(state, outcome(state))
-    # Unregister first, so a page that refetches the list on this broadcast no longer sees it.
-    Registry.unregister(Gitastic.Registry, state.branch)
-    broadcast(state)
-    {:stop, :normal, :ok, state}
+    approved? = match?(%{verdict: :approved}, List.last(state.decisions))
+    status = if approved?, do: :merged, else: :closed
+    state = %{state | status: status, done_at: DateTime.utc_now()}
+    state = changed(tell_waiters(state, outcome(state)))
+    {:reply, {:ok, status}, state}
   end
 
   @impl true

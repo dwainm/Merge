@@ -9,8 +9,8 @@ defmodule Gitastic.Report do
   """
   def outcome(o, url, via \\ :cli)
 
-  def outcome(%{status: :closed} = o, _url, _via) do
-    "Merge request #{o.branch} was closed.\n"
+  def outcome(%{status: status} = o, _url, _via) when status in [:merged, :closed] do
+    "Merge request #{o.branch} was #{status}.\n"
   end
 
   def outcome(o, url, via) do

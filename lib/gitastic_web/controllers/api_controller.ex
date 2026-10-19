@@ -70,7 +70,7 @@ defmodule GitasticWeb.ApiController do
 
   def close(conn, %{"branch" => branch}) do
     case MergeRequest.close(branch) do
-      :ok -> json(conn, %{closed: branch})
+      {:ok, status} -> json(conn, %{closed: branch, status: status})
       :error -> not_found(conn, branch)
     end
   end

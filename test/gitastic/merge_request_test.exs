@@ -117,14 +117,24 @@ defmodule Gitastic.MergeRequestTest do
     assert message =~ "not on"
   end
 
-  test "closing tells waiting agents and drops it from the list", c do
+  test "closing tells waiting agents and keeps it, read-only", c do
     task = Task.async(fn -> MergeRequest.wait(c.branch, "agent-a", 5_000) end)
     wait_for_waiters(c.branch, 1)
 
-    assert :ok = MergeRequest.close(c.branch)
+    assert {:ok, :closed} = MergeRequest.close(c.branch)
     assert {:ok, %{status: :closed}} = Task.await(task)
-    refute Enum.any?(MergeRequest.list(), &(&1.branch == c.branch))
-    assert :error = MergeRequest.get(c.branch)
+    assert {:ok, %{status: :closed, files: [_]}} = MergeRequest.get(c.branch)
+    assert {:error, _} = MergeRequest.comment(c.branch, %{body: "Late"})
+    assert {:ok, %{status: :closed}} = MergeRequest.wait(c.branch, "late", 5_000)
+  end
+
+  test "closing an approved one marks it merged, and opening the branch again starts afresh", c do
+    {:ok, _} = MergeRequest.comment(c.branch, %{body: "Fine."})
+    {:ok, _} = MergeRequest.decide(c.branch, :approved)
+    assert {:ok, :merged} = MergeRequest.close(c.branch)
+
+    assert {:ok, %{status: :open, comments: [], decisions: []}, :opened} =
+             MergeRequest.open(%{branch: c.branch, repo: c.repo})
   end
 
   defp wait_for_waiters(branch, n) do

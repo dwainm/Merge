@@ -82,7 +82,11 @@ defmodule Gitastic.CLI do
   end
 
   defp command(["mr", "close", branch], _opts) do
-    with {:ok, _} <- post("/api/close", %{branch: branch}), do: IO.puts("Closed #{branch}.")
+    with {:ok, %{"status" => status}} <- post("/api/close", %{branch: branch}) do
+      IO.puts(
+        "#{String.capitalize(state(status))} #{branch}. It stays on the home page, read-only."
+      )
+    end
   end
 
   defp command(["mr", "list"], _opts) do
@@ -109,6 +113,8 @@ defmodule Gitastic.CLI do
   defp state("open"), do: "open"
   defp state("needs_work"), do: "needs work"
   defp state("approved"), do: "approved"
+  defp state("merged"), do: "merged"
+  defp state("closed"), do: "closed"
   defp state(other), do: other
 
   # Holds a request open on the server until there is news, and asks again

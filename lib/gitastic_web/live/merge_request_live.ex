@@ -49,13 +49,6 @@ defmodule GitasticWeb.MergeRequestLive do
   end
 
   @impl true
-  def handle_info({:merge_request, %{status: :closed}}, socket) do
-    {:noreply,
-     socket
-     |> put_flash(:info, "#{socket.assigns.branch} was closed.")
-     |> push_navigate(to: ~p"/")}
-  end
-
   def handle_info({:merge_request, mr}, socket) do
     {:noreply, socket |> assign(mr: mr, page_title: mr.title) |> load_files()}
   end
@@ -107,7 +100,7 @@ defmodule GitasticWeb.MergeRequestLive do
   end
 
   defp gone(socket) do
-    socket |> put_flash(:error, "This merge request is closed.") |> push_navigate(to: ~p"/")
+    socket |> put_flash(:error, "This merge request is gone.") |> push_navigate(to: ~p"/")
   end
 
   defp blank_form(name), do: to_form(%{"body" => ""}, as: name)
@@ -211,8 +204,22 @@ defmodule GitasticWeb.MergeRequestLive do
             </span>
           </span>
         </div>
-        <p :if={@mr.body != ""} class="mt-3 whitespace-pre-wrap text-sm text-zinc-700">{@mr.body}</p>
+        <div :if={@mr.body != ""} id="mr-body" class="markdown mt-3 max-w-3xl text-sm text-zinc-700">
+          {Phoenix.HTML.raw(Gitastic.Body.to_html(@mr.body))}
+        </div>
       </header>
+
+      <div
+        :if={MergeRequest.done?(@mr)}
+        id="done-banner"
+        class={[
+          "mb-4 rounded-lg px-3 py-2 text-sm",
+          @mr.status == :merged && "bg-violet-50 text-violet-900",
+          @mr.status == :closed && "bg-zinc-100 text-zinc-700"
+        ]}
+      >
+        {status_label(@mr.status)} {ago(@mr.done_at)}. Kept to look back at: the diff is as it was then.
+      </div>
 
       <div
         :if={@new_since && MapSet.size(@new_since) > 0 && @view != :since}
@@ -303,7 +310,7 @@ defmodule GitasticWeb.MergeRequestLive do
             index={i}
             line_comments={@line_comments}
             picked={@picked}
-            commentable
+            commentable={not MergeRequest.done?(@mr)}
           >
             <:comment :let={comment}>
               <.comment comment={comment} addressed={addressed_for(@mr, comment)} />
@@ -385,7 +392,13 @@ defmodule GitasticWeb.MergeRequestLive do
           <% end %>
         <% end %>
 
-        <.form for={@comment_form} id="comment-form" phx-submit="comment" class="space-y-2">
+        <.form
+          :if={not MergeRequest.done?(@mr)}
+          for={@comment_form}
+          id="comment-form"
+          phx-submit="comment"
+          class="space-y-2"
+        >
           <textarea
             name={@comment_form[:body].name}
             id="comment-body"
@@ -399,6 +412,7 @@ defmodule GitasticWeb.MergeRequestLive do
         </.form>
 
         <.form
+          :if={not MergeRequest.done?(@mr)}
           for={@decision_form}
           id="decision-form"
           phx-submit="decide"

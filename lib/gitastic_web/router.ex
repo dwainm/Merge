@@ -38,6 +38,11 @@ defmodule GitasticWeb.Router do
     post "/close", ApiController, :close
   end
 
+  # Screenshots named in a merge request's body, read-only.
+  scope "/", GitasticWeb do
+    get "/shot", ShotController, :show
+  end
+
   # Last, so it only catches what nothing above matched.
   scope "/", GitasticWeb do
     pipe_through :browser

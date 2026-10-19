@@ -1,5 +1,8 @@
 defmodule Gitastic.MCP.CloseMergeRequest do
-  @moduledoc "Closes a merge request: anyone still waiting is told, and it leaves the list."
+  @moduledoc """
+  Closes a merge request once you are done with it: merged when it was approved,
+  closed otherwise. Anyone still waiting is told; it stays on the page, read-only.
+  """
 
   use Anubis.Server.Component, type: :tool
 
@@ -10,7 +13,7 @@ defmodule Gitastic.MCP.CloseMergeRequest do
   @impl true
   def execute(params, frame) do
     case Gitastic.MergeRequest.close(params.branch) do
-      :ok -> Gitastic.MCP.reply("Closed #{params.branch}.", frame)
+      {:ok, status} -> Gitastic.MCP.reply("#{params.branch} is #{status}.", frame)
       :error -> Gitastic.MCP.error("No open merge request for #{params.branch}.", frame)
     end
   end
