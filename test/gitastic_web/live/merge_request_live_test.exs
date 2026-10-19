@@ -26,7 +26,7 @@ defmodule GitasticWeb.MergeRequestLiveTest do
     {:ok, page, _html} = live(conn, GitasticWeb.mr_path(c.branch))
     assert has_element?(page, "#done-banner")
     assert has_element?(page, "#file-0")
-    refute has_element?(page, "#decision-form")
+    refute has_element?(page, "#review-bar")
   end
 
   test "the diff, the commits, and one commit alone", %{conn: conn} = c do
@@ -58,7 +58,7 @@ defmodule GitasticWeb.MergeRequestLiveTest do
              Task.await(waiter)
 
     view
-    |> form("#decision-form", decision: %{body: "Keep hello."})
+    |> form("#review-form", review: %{body: "Keep hello."})
     |> render_submit(%{verdict: "reject"})
 
     assert {:ok, %{kind: :decision, decision: %{verdict: :needs_work}, comments: []}} =
@@ -71,7 +71,7 @@ defmodule GitasticWeb.MergeRequestLiveTest do
   test "rejecting without a word is refused", %{conn: conn} = c do
     {:ok, view, _html} = live(conn, GitasticWeb.mr_path(c.branch))
 
-    view |> form("#decision-form", decision: %{body: ""}) |> render_submit(%{verdict: "reject"})
+    view |> form("#review-form", review: %{body: ""}) |> render_submit(%{verdict: "reject"})
 
     assert {:ok, %{decisions: []}} = MergeRequest.get(c.branch)
   end

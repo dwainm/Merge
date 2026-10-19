@@ -29,8 +29,7 @@ defmodule GitasticWeb.MergeRequestLive do
     {:ok,
      socket
      |> assign(branch: branch, mr: mr, picked: nil, page_title: (mr && mr.title) || branch)
-     |> assign(line_form: blank_form(:line), comment_form: blank_form(:comment))
-     |> assign(decision_form: blank_form(:decision))}
+     |> assign(line_form: blank_form(:line), review_form: blank_form(:review))}
   end
 
   @impl true
@@ -77,23 +76,25 @@ defmodule GitasticWeb.MergeRequestLive do
     end
   end
 
-  def handle_event("comment", %{"comment" => %{"body" => body}}, socket) do
-    case MergeRequest.comment(socket.assigns.branch, %{body: body}) do
-      {:ok, _} -> {:noreply, assign(socket, comment_form: blank_form(:comment))}
-      {:error, message} -> {:noreply, put_flash(socket, :error, message)}
-      :error -> {:noreply, gone(socket)}
-    end
-  end
+  # The review bar: Comment posts the text; Approve and Reject decide, with it as the note.
+  def handle_event("send", %{"review" => %{"body" => body}} = params, socket) do
+    result =
+      case params["verdict"] do
+        "approve" -> MergeRequest.decide(socket.assigns.branch, :approved, body)
+        "reject" -> MergeRequest.decide(socket.assigns.branch, :needs_work, body)
+        _ -> MergeRequest.comment(socket.assigns.branch, %{body: body})
+      end
 
-  def handle_event("decide", %{"decision" => %{"body" => body}} = params, socket) do
-    verdict = if params["verdict"] == "approve", do: :approved, else: :needs_work
-
-    case MergeRequest.decide(socket.assigns.branch, verdict, body) do
+    case result do
       {:ok, _} ->
-        {:noreply,
-         socket
-         |> assign(decision_form: blank_form(:decision))
-         |> put_flash(:info, if(verdict == :approved, do: "Approved.", else: "Sent back."))}
+        flash =
+          case params["verdict"] do
+            "approve" -> "Approved."
+            "reject" -> "Sent back."
+            _ -> "Commented."
+          end
+
+        {:noreply, socket |> assign(review_form: blank_form(:review)) |> put_flash(:info, flash)}
 
       {:error, message} ->
         {:noreply, put_flash(socket, :error, message)}
@@ -547,42 +548,38 @@ defmodule GitasticWeb.MergeRequestLive do
               </div>
           <% end %>
         <% end %>
+      </section>
 
+      <%!-- Always at hand at the bottom; .BottomSpace keeps the page's bottom
+           clear by the bar's height, so the last file can scroll above it. --%>
+      <div
+        :if={not MergeRequest.done?(@mr)}
+        id="review-bar"
+        phx-hook=".BottomSpace"
+        class="fixed inset-x-0 bottom-0 z-40 border-t border-(--border) bg-(--surface)/95 backdrop-blur"
+      >
         <.form
-          :if={not MergeRequest.done?(@mr)}
-          for={@comment_form}
-          id="comment-form"
-          phx-submit="comment"
-          class="space-y-2"
+          for={@review_form}
+          id="review-form"
+          phx-submit="send"
+          class="mx-auto flex max-w-7xl flex-col gap-2 px-4 py-2 sm:flex-row sm:items-end lg:px-6"
         >
           <textarea
-            name={@comment_form[:body].name}
-            id="comment-body"
-            rows="3"
-            placeholder="A general comment"
-            class="w-full rounded-md border border-(--border) bg-(--surface) px-2 py-1.5 text-base focus:border-(--link) sm:text-sm focus:outline-none"
-          >{@comment_form[:body].value}</textarea>
-          <button class="rounded-md bg-(--surface) px-3 py-1.5 text-sm ring-1 ring-(--border) hover:bg-(--surface-2)">
-            Comment
-          </button>
-        </.form>
-
-        <.form
-          :if={not MergeRequest.done?(@mr)}
-          for={@decision_form}
-          id="decision-form"
-          phx-submit="decide"
-          class="space-y-2 rounded-lg border border-(--border) bg-(--surface) p-3"
-        >
-          <h2 class="text-sm font-semibold text-(--text-2)">Decide</h2>
-          <textarea
-            name={@decision_form[:body].name}
-            id="decision-body"
+            name={@review_form[:body].name}
+            id="review-body"
             rows="2"
-            placeholder="A note with the decision (needed to reject)"
-            class="w-full rounded-md border border-(--border) bg-(--surface) px-2 py-1.5 text-base focus:border-(--link) sm:text-sm focus:outline-none"
-          >{@decision_form[:body].value}</textarea>
+            placeholder="A comment, or a note with your decision (needed to reject)"
+            class="min-w-0 flex-1 resize-y rounded-md border border-(--border) bg-(--surface) px-2 py-1.5 text-base focus:border-(--link) focus:outline-none sm:text-sm"
+          >{@review_form[:body].value}</textarea>
           <div class="flex gap-2">
+            <button
+              id="comment-button"
+              name="verdict"
+              value="comment"
+              class="flex-1 rounded-md bg-(--surface) px-3 py-2 text-sm text-(--text) ring-1 ring-(--border) hover:bg-(--surface-2) sm:flex-none"
+            >
+              Comment
+            </button>
             <button
               id="approve-button"
               name="verdict"
@@ -601,7 +598,22 @@ defmodule GitasticWeb.MergeRequestLive do
             </button>
           </div>
         </.form>
-      </section>
+      </div>
+      <script :type={Phoenix.LiveView.ColocatedHook} name=".BottomSpace">
+        // Pads the page by the bar's height, kept up to date as it changes size.
+        export default {
+          mounted() {
+            this.observer = new ResizeObserver(() => {
+              document.body.style.paddingBottom = `${this.el.offsetHeight + 16}px`
+            })
+            this.observer.observe(this.el)
+          },
+          destroyed() {
+            this.observer.disconnect()
+            document.body.style.paddingBottom = ""
+          }
+        }
+      </script>
     </Layouts.app>
     """
   end
