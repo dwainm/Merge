@@ -42,6 +42,24 @@ minute the server fetches, refreshes this, and marks merge requests whose branch
 is on main as "Merged", then "On origin" once origin/main has it. The badges: Review
 (also when sent back for work), Approved, Merged, On origin, Closed.
 
+## Checks before Push
+
+`serve --check CMD` runs `CMD` (with `sh -c`) on every new tip of local `main`, in a
+checkout of its own (a detached worktree under `~/.gitastic/checks/`), one run at a
+time; a tip that's already superseded is skipped. For Day of Plenty:
+
+    --check 'MIX_ENV=test MIX_TEST_PARTITION=_gitastic_checks; export MIX_ENV MIX_TEST_PARTITION;
+             mix deps.get && mix compile --warnings-as-errors && mix check'
+
+The home card shows "Checks passed / running / failed on <sha>" (with the failing
+output), `/checks/<sha>` has the whole log, and a merged merge request shows
+"main at <sha>: checks passed". **Push** is enabled only when main's tip passed;
+**Push anyway** pushes regardless, after its own confirmation. Results are kept
+per commit on disk.
+
+The flow for a coordinator: merge into local main (all at once when there are
+several), wait for "Checks passed" on the tip, then Push from the home page.
+
 ## MCP
 
     claude mcp add --transport http gitastic http://localhost:4747/mcp
