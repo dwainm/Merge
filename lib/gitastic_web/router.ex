@@ -37,4 +37,11 @@ defmodule GitasticWeb.Router do
     post "/addressed", ApiController, :addressed
     post "/close", ApiController, :close
   end
+
+  # Last, so it only catches what nothing above matched.
+  scope "/", GitasticWeb do
+    pipe_through :browser
+
+    get "/*path", RedirectController, :home
+  end
 end
