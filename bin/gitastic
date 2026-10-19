@@ -1,0 +1,11 @@
+#!/bin/sh
+# The gitastic command, runnable from any directory: it remembers where it was
+# run from (the default repo and agent name) and runs the Mix task in the project.
+set -e
+root=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+export GITASTIC_CWD="$PWD"
+cd "$root"
+case "$1" in
+  serve) shift; exec mix gitastic.serve "$@" ;;
+  *) exec mix gitastic "$@" ;;
+esac
