@@ -10,9 +10,8 @@ defmodule GitasticWeb.MergeRequestComponents do
     ~H"""
     <span class={[
       "shrink-0 rounded-full px-2 py-0.5 text-xs font-medium",
-      @status == :open && "bg-(--info-bg) text-(--info-text)",
+      @status in [:open, :needs_work] && "bg-(--info-bg) text-(--info-text)",
       @status == :approved && "bg-(--ok-bg) text-(--ok-text)",
-      @status == :needs_work && "bg-(--warn-bg) text-(--warn-text)",
       @status == :merged && @merged && @merged.pushed && "bg-(--merged-bg) text-(--merged-text)",
       @status == :merged && !(@merged && @merged.pushed) && "bg-(--pending-bg) text-(--pending-text)",
       @status == :closed && "bg-(--surface-2) text-(--text-2)"
@@ -29,7 +28,8 @@ defmodule GitasticWeb.MergeRequestComponents do
 
   defp base_label(:open), do: "Review"
   defp base_label(:approved), do: "Approved"
-  defp base_label(:needs_work), do: "Needs work"
+  # Sent back for work is still under review, as far as the badge goes.
+  defp base_label(:needs_work), do: "Review"
   defp base_label(:merged), do: "Merged"
   defp base_label(:closed), do: "Closed"
 

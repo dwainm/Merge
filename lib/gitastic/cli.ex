@@ -128,7 +128,7 @@ defmodule Gitastic.CLI do
   defp command(_args, _opts), do: {:error, @usage}
 
   defp state("open"), do: "review"
-  defp state("needs_work"), do: "needs work"
+  defp state("needs_work"), do: "review"
   defp state("approved"), do: "approved"
   defp state("merged"), do: "merged"
   defp state("closed"), do: "closed"
