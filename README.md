@@ -36,7 +36,8 @@ The commands find the server through `~/.gitastic/url` (`GITASTIC_URL` overrides
 The home page shows where the repo's local `main` stands against `origin/main`
 (`serve --repo PATH`, else the first merge request's repo): one quiet line when
 they match, else the commits on either side, a diff page, and **Push** or **Pull**.
-A push is checked by fetching again; its result stays until the next one. Every
+A push is checked by fetching again; a success shows for a few seconds, a failure
+stays until the next push. Every
 minute the server fetches, refreshes this, and marks merge requests whose branch
 is on main as "Merged, not pushed", then "On GitHub" once origin/main has it.
 

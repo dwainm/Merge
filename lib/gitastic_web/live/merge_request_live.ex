@@ -119,13 +119,13 @@ defmodule GitasticWeb.MergeRequestLive do
 
         {:commit, sha} ->
           if Enum.any?(mr.commits, &(&1.sha == sha)),
-            do: Git.commit_diff(mr.repo, sha),
+            do: Git.commit_diff(MergeRequest.git_repo(mr), sha),
             else: {:error, "That commit is not on #{mr.branch}."}
 
         :since ->
           case last_decision(mr) do
             nil -> {:ok, mr.files}
-            d -> Git.range_diff(mr.repo, d.head, mr.head)
+            d -> Git.range_diff(MergeRequest.git_repo(mr), d.head, mr.head)
           end
       end
 

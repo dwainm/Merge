@@ -192,6 +192,34 @@ defmodule Gitastic.MergeRequestTest do
     assert {:ok, %{sha: ^head, pushed: true}} = MergeRequest.check_merged(branch)
   end
 
+  test "merged into local main but not pushed, after the stream removed its worktree" do
+    {repo, _origin} = GitRepo.with_origin()
+    branch = "gone-test-#{System.unique_integer([:positive])}"
+    worktree = Path.join(Path.dirname(repo), branch)
+    GitRepo.git!(repo, ["worktree", "add", "-q", "-b", branch, worktree])
+    GitRepo.commit!(worktree, %{"README.md" => "# App\n"}, "Add a readme")
+    on_exit(fn -> MergeRequest.close(branch) end)
+    {:ok, _, :opened} = MergeRequest.open(%{branch: branch, repo: worktree})
+
+    # The coordinator merges into local main; the stream removes its worktree.
+    GitRepo.git!(repo, ["merge", "-q", "--no-ff", "-m", "Merge #{branch}", branch])
+    merge = GitRepo.git!(repo, ["rev-parse", "HEAD"]) |> String.trim()
+    GitRepo.git!(repo, ["worktree", "remove", worktree])
+    refute File.dir?(worktree)
+
+    assert {:ok, %{sha: ^merge, pushed: false}} = MergeRequest.check_merged(branch)
+    assert {:ok, %{status: :merged, merged: %{pushed: false}}} = MergeRequest.get(branch)
+
+    GitRepo.git!(repo, ["push", "-q", "origin", "main"])
+    assert {:ok, %{sha: ^merge, pushed: true}} = MergeRequest.check_merged(branch)
+  end
+
+  test "one opened before the shared repo was kept finds it above the removed worktree" do
+    {repo, _origin} = GitRepo.with_origin()
+    worktree = Path.join(repo, "nested-wt")
+    assert Gitastic.Git.enclosing_repo(worktree) == Path.join(repo, ".git")
+  end
+
   defp wait_for_waiters(branch, n) do
     case MergeRequest.get(branch) do
       {:ok, %{waiting: waiting}} when length(waiting) == n -> :ok

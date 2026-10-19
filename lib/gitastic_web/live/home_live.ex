@@ -6,6 +6,9 @@ defmodule GitasticWeb.HomeLive do
 
   use GitasticWeb, :live_view
 
+  # How long a successful push's result stays up. A failure stays until the next push.
+  @success_ms 10_000
+
   alias Gitastic.{Drift, MergeRequest}
   import GitasticWeb.MergeRequestComponents
 
@@ -19,7 +22,8 @@ defmodule GitasticWeb.HomeLive do
 
     {:ok,
      socket
-     |> assign(page_title: "Merge requests", busy: nil, last_push: Drift.last_push())
+     |> assign(page_title: "Merge requests", busy: nil)
+     |> show_push(Drift.last_push())
      |> assign(:drift, Drift.current() || Drift.read())
      |> load()}
   end
@@ -27,6 +31,13 @@ defmodule GitasticWeb.HomeLive do
   @impl true
   def handle_info(:merge_requests_changed, socket), do: {:noreply, load(socket)}
   def handle_info({:drift, drift}, socket), do: {:noreply, assign(socket, drift: drift)}
+
+  def handle_info(:hide_push, socket) do
+    case socket.assigns.last_push do
+      %{ok: true} -> {:noreply, assign(socket, last_push: nil)}
+      _ -> {:noreply, socket}
+    end
+  end
 
   @impl true
   def handle_event("push", _params, socket) do
@@ -39,7 +50,7 @@ defmodule GitasticWeb.HomeLive do
 
   @impl true
   def handle_async(:push, {:ok, result}, socket) do
-    {:noreply, assign(socket, busy: nil, last_push: result)}
+    {:noreply, socket |> assign(busy: nil) |> show_push(result)}
   end
 
   def handle_async(:pull, {:ok, {:ok, _}}, socket) do
@@ -53,6 +64,20 @@ defmodule GitasticWeb.HomeLive do
   def handle_async(_name, {:exit, reason}, socket) do
     {:noreply, socket |> assign(busy: nil) |> put_flash(:error, "Failed: #{inspect(reason)}")}
   end
+
+  # A success shows for a few seconds after it happened, then goes; a failure stays.
+  defp show_push(socket, %{ok: true, at: at} = result) do
+    left = @success_ms - DateTime.diff(DateTime.utc_now(), at, :millisecond)
+
+    if left > 0 do
+      if connected?(socket), do: Process.send_after(self(), :hide_push, left)
+      assign(socket, last_push: result)
+    else
+      assign(socket, last_push: nil)
+    end
+  end
+
+  defp show_push(socket, result), do: assign(socket, last_push: result)
 
   defp load(socket) do
     {done, open} = Enum.split_with(MergeRequest.list(), &MergeRequest.done?/1)

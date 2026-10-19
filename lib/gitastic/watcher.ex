@@ -39,7 +39,7 @@ defmodule Gitastic.Watcher do
   def run do
     mrs = MergeRequest.list()
 
-    [Drift.repo() | Enum.map(mrs, & &1.repo)]
+    [Drift.repo() | Enum.map(mrs, &MergeRequest.git_repo/1)]
     |> Enum.reject(&is_nil/1)
     |> Enum.uniq_by(&common_dir/1)
     |> Enum.each(&Git.fetch/1)

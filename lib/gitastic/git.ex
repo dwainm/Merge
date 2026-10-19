@@ -59,6 +59,23 @@ defmodule Gitastic.Git do
     end
   end
 
+  @doc "The repo's shared git directory (a worktree's main repo), as an absolute path."
+  def common_dir(repo) do
+    case git(repo, ["rev-parse", "--git-common-dir"]) do
+      {:ok, dir} -> Path.expand(String.trim(dir), repo)
+      {:error, _} -> nil
+    end
+  end
+
+  @doc "The shared git directory of the nearest existing repo at or above `path`, or nil."
+  def enclosing_repo(path) do
+    path
+    |> Path.expand()
+    |> Stream.iterate(&Path.dirname/1)
+    |> Enum.take_while(&(&1 != "/"))
+    |> Enum.find_value(fn dir -> File.dir?(dir) && common_dir(dir) end)
+  end
+
   @doc "True when `ancestor` is reachable from `ref` (both resolve)."
   def ancestor?(repo, ancestor, ref) do
     match?({:ok, _}, git(repo, ["merge-base", "--is-ancestor", ancestor, ref]))

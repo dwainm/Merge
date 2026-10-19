@@ -5,7 +5,8 @@ defmodule Gitastic.Drift do
   first merge request's. `Gitastic.Watcher` fetches and broadcasts it on
   `topic/0` as `{:drift, drift}`, with main's latest CI runs from `gh`;
   `push/0` and `pull/0` close the gap. A push is judged by fetching again
-  afterwards, not by git's exit code, and its result is kept until the next.
+  afterwards, not by git's exit code. A failure stays on the home page until
+  the next push; a success shows for a few seconds.
   """
 
   alias Gitastic.{Git, MergeRequest}
@@ -16,7 +17,7 @@ defmodule Gitastic.Drift do
   def repo do
     Application.get_env(:gitastic, :repo) ||
       case MergeRequest.list() do
-        [mr | _] -> mr.repo
+        [mr | _] -> MergeRequest.git_repo(mr)
         [] -> nil
       end
   end

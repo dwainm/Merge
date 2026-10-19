@@ -49,6 +49,7 @@ defmodule Gitastic.MergeRequest do
     :merge_base,
     :done_at,
     :merged,
+    :git_dir,
     status: :open,
     agents: [],
     comments: [],
@@ -66,6 +67,20 @@ defmodule Gitastic.MergeRequest do
 
   def topic(branch), do: "merge_request:" <> branch
   def list_topic, do: @list_topic
+
+  @doc """
+  Where to run git for a merge request: the repo or worktree it was opened in,
+  or, once that worktree is removed (streams remove theirs after a merge), the
+  repo's shared git directory, kept at open (or, for one opened before that was
+  kept, the nearest enclosing repo).
+  """
+  def git_repo(mr) do
+    cond do
+      File.dir?(mr.repo) -> mr.repo
+      dir = Map.get(mr, :git_dir) -> dir
+      true -> Git.enclosing_repo(mr.repo) || mr.repo
+    end
+  end
 
   @doc "True once a merge request is merged or closed."
   def done?(%{status: status}), do: status in [:merged, :closed]
@@ -232,7 +247,8 @@ defmodule Gitastic.MergeRequest do
           body: attrs[:body] || "",
           opened_by: opened_by,
           opened_at: DateTime.utc_now(),
-          agents: [opened_by]
+          agents: [opened_by],
+          git_dir: Git.common_dir(repo)
         }
         |> refresh()
 
@@ -369,8 +385,10 @@ defmodule Gitastic.MergeRequest do
   end
 
   def handle_call({:addressed, commit, note, by}, _from, state) do
-    with {:ok, sha} <- Git.rev_parse(state.repo, commit),
-         true <- Git.on_branch?(state.repo, sha, state.branch) || {:error, :not_on_branch} do
+    repo = git_repo(state)
+
+    with {:ok, sha} <- Git.rev_parse(repo, commit),
+         true <- Git.on_branch?(repo, sha, state.branch) || {:error, :not_on_branch} do
       entry = %{
         sha: sha,
         short: String.slice(sha, 0, 7),
@@ -505,7 +523,7 @@ defmodule Gitastic.MergeRequest do
   # Where the branch went into main: the given commit, or the one git finds on
   # local main, else on origin/main. `pushed` is whether origin/main has it.
   defp find_merge(state, commit) do
-    repo = state.repo
+    repo = git_repo(state)
     remote = if match?({:ok, _}, Git.rev_parse(repo, "origin/main")), do: "origin/main"
 
     sha =
@@ -571,22 +589,23 @@ defmodule Gitastic.MergeRequest do
 
   # Recomputes the commits and the diff of the branch from git.
   defp refresh(state) do
-    {:ok, head} = Git.rev_parse(state.repo, state.branch)
+    repo = git_repo(state)
+    {:ok, head} = Git.rev_parse(repo, state.branch)
 
     merge_base =
-      case Git.merge_base(state.repo, state.base, state.branch) do
+      case Git.merge_base(repo, state.base, state.branch) do
         {:ok, sha} -> sha
         {:error, _} -> nil
       end
 
     commits =
-      case Git.commits(state.repo, state.base, state.branch) do
+      case Git.commits(repo, state.base, state.branch) do
         {:ok, commits} -> commits
         {:error, _} -> []
       end
 
     files =
-      case Git.branch_diff(state.repo, state.base, state.branch) do
+      case Git.branch_diff(repo, state.base, state.branch) do
         {:ok, files} -> files
         {:error, _} -> []
       end
