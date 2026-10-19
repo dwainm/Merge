@@ -116,4 +116,7 @@ reloader picks up code changes, but not new libraries).
   heredocs that span lines keep their colour.
 - **MCP** uses `anubis_mcp` over Streamable HTTP at `/mcp`. It runs one request at a time per
   session, so `wait_for_review` holds for up to 5 minutes, then answers "Still waiting, call again".
+- **The review queue** is one list for the server, kept on disk: **+ Queue** on a merge request puts it
+  in the tabs at the top, oldest first, the first still in review marked Next. Approved, merged or
+  closed, its tab fades for 15 seconds and drops away; that never moves the page you're on.
 - **No sign-in.** The server listens on localhost; the tailnet is the only way in from a phone.
