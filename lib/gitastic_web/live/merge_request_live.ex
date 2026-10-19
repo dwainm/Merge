@@ -206,7 +206,9 @@ defmodule GitasticWeb.MergeRequestLive do
           <span>opened by {@mr.opened_by} {ago(@mr.opened_at)}</span>
           <span id="agents">
             told: {Enum.join(@mr.agents, ", ")}
-            <span :if={@mr.waiters > 0} class="text-emerald-700">({@mr.waiters} waiting now)</span>
+            <span :if={@mr.waiting != []} class="text-emerald-700">
+              (waiting now: {Enum.join(@mr.waiting, ", ")})
+            </span>
           </span>
         </div>
         <p :if={@mr.body != ""} class="mt-3 whitespace-pre-wrap text-sm text-zinc-700">{@mr.body}</p>

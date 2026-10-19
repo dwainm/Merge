@@ -12,6 +12,8 @@ defmodule Gitastic.Application do
       {Phoenix.PubSub, name: Gitastic.PubSub},
       {Registry, keys: :unique, name: Gitastic.Registry},
       {DynamicSupervisor, name: Gitastic.MergeRequests, strategy: :one_for_one},
+      {Gitastic.MCP,
+       transport: :streamable_http, request_timeout: Gitastic.MCP.request_timeout()},
       # Start to serve requests, typically the last entry
       GitasticWeb.Endpoint
     ]

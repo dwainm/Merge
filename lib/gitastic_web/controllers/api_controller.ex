@@ -19,6 +19,7 @@ defmodule GitasticWeb.ApiController do
     attrs = %{
       branch: branch,
       repo: params["repo"],
+      base: params["base"],
       title: params["title"],
       body: params["body"],
       opened_by: params["as"]
@@ -84,6 +85,7 @@ defmodule GitasticWeb.ApiController do
       head: mr.head,
       opened_by: mr.opened_by,
       agents: mr.agents,
+      waiting: mr.waiting,
       commits: length(mr.commits),
       files: length(mr.files),
       comments: length(mr.comments),

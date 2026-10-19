@@ -32,6 +32,18 @@ defmodule Gitastic.MergeRequestTest do
     assert Enum.count(MergeRequest.list(), &(&1.branch == c.branch)) == 1
   end
 
+  test "a stacked branch is reviewed against its parent", %{branch: parent, repo: repo} do
+    child = parent <> "-child"
+    GitRepo.git!(repo, ["checkout", "-q", "-b", child])
+    GitRepo.commit!(repo, %{"README.md" => "# App\n"}, "Add a readme")
+    on_exit(fn -> MergeRequest.close(child) end)
+
+    assert {:ok, mr, :opened} = MergeRequest.open(%{branch: child, repo: repo, base: parent})
+
+    assert %{base: ^parent, commits: [%{subject: "Add a readme"}], files: [%{path: "README.md"}]} =
+             mr
+  end
+
   test "a branch that isn't there doesn't open", %{repo: repo} do
     assert {:error, message} = MergeRequest.open(%{branch: "no-such-branch", repo: repo})
     assert message =~ "no-such-branch"
@@ -117,7 +129,7 @@ defmodule Gitastic.MergeRequestTest do
 
   defp wait_for_waiters(branch, n) do
     case MergeRequest.get(branch) do
-      {:ok, %{waiters: ^n}} -> :ok
+      {:ok, %{waiting: waiting}} when length(waiting) == n -> :ok
       _ -> wait_for_waiters(branch, n)
     end
   end

@@ -21,6 +21,11 @@ defmodule GitasticWeb.Router do
     live "/mr/*branch", MergeRequestLive
   end
 
+  # The MCP server: claude mcp add --transport http gitastic http://localhost:<PORT>/mcp
+  forward "/mcp", Anubis.Server.Transport.StreamableHTTP.Plug,
+    server: Gitastic.MCP,
+    request_timeout: Gitastic.MCP.request_timeout()
+
   # The CLI's API, JSON on localhost.
   scope "/api", GitasticWeb do
     pipe_through :api

@@ -3,12 +3,17 @@ defmodule Gitastic.Report do
   Plain text for agents: what `gitastic mr wait` prints, and the MCP tools return.
   """
 
-  @doc "The outcome of a wait as the text an agent reads as its next prompt."
-  def outcome(%{status: :closed} = o, _url) do
+  @doc """
+  The outcome of a wait as the text an agent reads as its next prompt. `via` is
+  `:cli` or `:mcp`, for the hint on what to do next.
+  """
+  def outcome(o, url, via \\ :cli)
+
+  def outcome(%{status: :closed} = o, _url, _via) do
     "Merge request #{o.branch} was closed.\n"
   end
 
-  def outcome(o, url) do
+  def outcome(o, url, via) do
     d = o.decision
 
     headline =
@@ -24,11 +29,18 @@ defmodule Gitastic.Report do
       d.body != "" && "\n#{d.by}: #{d.body}\n",
       comments("Comments", o.comments, []),
       comments("Earlier comments", o.earlier, o.addressed),
-      d.verdict == :needs_work &&
-        "\nWhen it is fixed: gitastic mr addressed #{o.branch} <commit> --note \"...\", then gitastic mr wait #{o.branch}\n"
+      d.verdict == :needs_work && next_step(o.branch, via)
     ]
     |> Enum.filter(& &1)
     |> IO.iodata_to_binary()
+  end
+
+  defp next_step(branch, :cli) do
+    "\nWhen it is fixed: gitastic mr addressed #{branch} <commit> --note \"...\", then gitastic mr wait #{branch}\n"
+  end
+
+  defp next_step(branch, :mcp) do
+    "\nWhen it is fixed: call addressed with branch #{branch}, the commit and a note, then wait_for_review.\n"
   end
 
   defp comments(_title, [], _addressed), do: false

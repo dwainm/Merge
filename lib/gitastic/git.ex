@@ -14,6 +14,14 @@ defmodule Gitastic.Git do
     end
   end
 
+  @doc "The base a branch is reviewed against: `origin/main` when the repo has it, else `main`."
+  def default_base(repo) do
+    case rev_parse(repo, "origin/main") do
+      {:ok, _} -> "origin/main"
+      {:error, _} -> "main"
+    end
+  end
+
   def merge_base(repo, base, branch) do
     with {:ok, sha} <- git(repo, ["merge-base", base, branch]), do: {:ok, String.trim(sha)}
   end

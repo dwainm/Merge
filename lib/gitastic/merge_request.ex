@@ -86,7 +86,7 @@ defmodule Gitastic.MergeRequest do
     |> Enum.sort_by(& &1.opened_at, DateTime)
   end
 
-  @doc "The merge request for a branch, without its waiters."
+  @doc "The merge request for a branch; `waiting` names the agents blocked in `wait/3`."
   def get(branch), do: call(branch, :get)
 
   defp get!(branch) do
@@ -155,7 +155,7 @@ defmodule Gitastic.MergeRequest do
   @impl true
   def init(attrs) do
     repo = Path.expand(attrs[:repo] || File.cwd!())
-    base = attrs[:base] || "main"
+    base = blank_to_nil(attrs[:base]) || Git.default_base(repo)
     branch = attrs.branch
 
     with {:ok, _} <- Git.rev_parse(repo, base),
@@ -266,7 +266,7 @@ defmodule Gitastic.MergeRequest do
     else
       ref = Process.monitor(pid)
       timer = Process.send_after(self(), {:wait_timeout, ref}, timeout)
-      {:noreply, %{state | waiters: Map.put(state.waiters, ref, {from, timer})}}
+      {:noreply, changed(%{state | waiters: Map.put(state.waiters, ref, {from, timer, name})})}
     end
   end
 
@@ -282,7 +282,7 @@ defmodule Gitastic.MergeRequest do
   @impl true
   def handle_info({:wait_timeout, ref}, state) do
     case Map.pop(state.waiters, ref) do
-      {{from, _timer}, waiters} ->
+      {{from, _timer, _name}, waiters} ->
         Process.demonitor(ref, [:flush])
         GenServer.reply(from, {:ok, :timeout})
         {:noreply, %{state | waiters: waiters}}
@@ -294,9 +294,9 @@ defmodule Gitastic.MergeRequest do
 
   def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
     case Map.pop(state.waiters, ref) do
-      {{_from, timer}, waiters} ->
+      {{_from, timer, _name}, waiters} ->
         Process.cancel_timer(timer)
-        {:noreply, %{state | waiters: waiters}}
+        {:noreply, changed(%{state | waiters: waiters})}
 
       {nil, _} ->
         {:noreply, state}
@@ -316,7 +316,7 @@ defmodule Gitastic.MergeRequest do
   end
 
   defp tell_waiters(state, outcome) do
-    for {ref, {from, timer}} <- state.waiters do
+    for {ref, {from, timer, _name}} <- state.waiters do
       Process.cancel_timer(timer)
       Process.demonitor(ref, [:flush])
       GenServer.reply(from, {:ok, outcome})
@@ -385,7 +385,11 @@ defmodule Gitastic.MergeRequest do
     Phoenix.PubSub.broadcast(Gitastic.PubSub, @list_topic, :merge_requests_changed)
   end
 
-  defp public(state), do: %{Map.from_struct(state) | waiters: map_size(state.waiters)}
+  # `waiting` names the agents blocked in `wait/3` right now.
+  defp public(state) do
+    waiting = state.waiters |> Map.values() |> Enum.map(&elem(&1, 2)) |> Enum.uniq()
+    state |> Map.from_struct() |> Map.delete(:waiters) |> Map.put(:waiting, waiting)
+  end
 
   defp blank_to_nil(nil), do: nil
 

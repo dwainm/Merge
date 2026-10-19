@@ -10,7 +10,7 @@ defmodule Gitastic.CLI do
 
   @usage """
   gitastic serve [--port N]
-  gitastic mr open <branch> [--repo PATH] [--title T] [--body B | --body-file F] [--as NAME]
+  gitastic mr open <branch> [--repo PATH] [--base BRANCH] [--title T] [--body B | --body-file F] [--as NAME]
   gitastic mr wait <branch> [--as NAME]
   gitastic mr addressed <branch> <commit> [--note "..."] [--as NAME]
   gitastic mr close <branch>
@@ -19,6 +19,7 @@ defmodule Gitastic.CLI do
 
   @switches [
     repo: :string,
+    base: :string,
     title: :string,
     body: :string,
     body_file: :string,
@@ -50,6 +51,7 @@ defmodule Gitastic.CLI do
            post("/api/open", %{
              branch: branch,
              repo: Path.expand(opts[:repo] || ".", cwd()),
+             base: opts[:base],
              title: opts[:title],
              body: body,
              as: agent(opts)
@@ -88,7 +90,14 @@ defmodule Gitastic.CLI do
       if mrs == [], do: IO.puts("No open merge requests.")
 
       for mr <- mrs do
-        IO.puts("#{mr["branch"]}  #{mr["status"]}  #{mr["title"]}  #{mr["url"]}")
+        waiting =
+          if mr["waiting"] == [],
+            do: "nobody waiting",
+            else: "waiting: " <> Enum.join(mr["waiting"], ", ")
+
+        IO.puts(
+          "#{mr["branch"]}  #{state(mr["status"])}  #{mr["title"]}  (#{waiting})  #{mr["url"]}"
+        )
       end
 
       :ok
@@ -96,6 +105,11 @@ defmodule Gitastic.CLI do
   end
 
   defp command(_args, _opts), do: {:error, @usage}
+
+  defp state("open"), do: "open"
+  defp state("needs_work"), do: "needs work"
+  defp state("approved"), do: "approved"
+  defp state(other), do: other
 
   # Holds a request open on the server until there is news, and asks again
   # each time the server's hold runs out.
