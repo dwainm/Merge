@@ -17,13 +17,19 @@ defmodule GitasticWeb.ChecksLive do
   def handle_info(:tick, socket), do: {:noreply, load(socket)}
 
   # While a run goes, its log is read again every two seconds.
-  defp load(socket) do
-    status = Checks.status(socket.assigns.sha)
+  defp load(%{assigns: %{sha: sha}} = socket) do
+    if Process.whereis(Checks) do
+      load(socket, Checks.status(sha), Checks.log(sha))
+    else
+      assign(socket, status: :off, log: nil)
+    end
+  end
 
+  defp load(socket, status, log) do
     if connected?(socket) and match?({:running, _}, status),
       do: Process.send_after(self(), :tick, 2_000)
 
-    assign(socket, status: status, log: Checks.log(socket.assigns.sha))
+    assign(socket, status: status, log: log)
   end
 
   @impl true
@@ -35,6 +41,7 @@ defmodule GitasticWeb.ChecksLive do
         Checks on <span class="font-mono">{String.slice(@sha, 0, 7)}</span>
       </h1>
       <.checks_line sha={@sha} status={@status} />
+      <p :if={@status == :off} class="text-sm text-(--text-muted)">No checks run on this server.</p>
       <pre
         :if={@log}
         id="checks-log"
