@@ -6,7 +6,8 @@ defmodule Mix.Tasks.Gitastic.Serve do
   commands, and keeps running.
 
   When another server (the systemd service, usually) already holds the tailnet
-  name, this one runs on localhost only and leaves `~/.gitastic/url` to it.
+  name, this one runs on localhost only and leaves `~/.gitastic/url` and the
+  stored merge requests to it: its own are kept in memory only.
   """
 
   use Mix.Task
@@ -16,6 +17,12 @@ defmodule Mix.Tasks.Gitastic.Serve do
     {opts, _, _} = OptionParser.parse(args, strict: [port: :integer])
 
     if port = opts[:port], do: System.put_env("PORT", Integer.to_string(port))
+    # Decided before the app starts, since starting it restores the store.
+    Mix.Task.run("app.config")
+
+    if match?({:held, _}, GitasticWeb.DevTunnel.held_by()),
+      do: Application.put_env(:gitastic, :store_dir, nil)
+
     Application.put_env(:phoenix, :serve_endpoints, true, persistent: true)
     Mix.Task.run("app.start")
 
@@ -33,7 +40,8 @@ defmodule Mix.Tasks.Gitastic.Serve do
       {:held, port} ->
         IO.puts("""
         The tailnet name is held by another gitastic server on localhost:#{port}
-        (the service: systemctl --user status gitastic). This one is localhost only.
+        (the service: systemctl --user status gitastic). This one is localhost only,
+        and keeps its merge requests in memory only.
         Point commands at it with: GITASTIC_URL=#{local} gitastic mr ...\
         """)
     end

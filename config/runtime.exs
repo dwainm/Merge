@@ -24,10 +24,13 @@ config :gitastic, GitasticWeb.Endpoint,
   # Port 0 asks the OS for a free port; `gitastic serve --port N` sets PORT.
   http: [port: String.to_integer(System.get_env("PORT", "0"))]
 
-# Where each merge request is kept on disk (Gitastic.Store); tests keep nothing.
+# Where each merge request is kept on disk (Gitastic.Store). Tests keep nothing,
+# and neither does an ad-hoc `gitastic serve` beside the main one (GITASTIC_STORE=off).
 config :gitastic,
        :store_dir,
-       if(config_env() != :test, do: Path.join(System.user_home!(), ".gitastic/merge_requests"))
+       if(config_env() != :test and System.get_env("GITASTIC_STORE") != "off",
+         do: Path.join(System.user_home!(), ".gitastic/merge_requests")
+       )
 
 if config_env() == :dev do
   # Reload browser tabs when matching files change.

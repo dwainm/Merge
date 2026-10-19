@@ -43,6 +43,18 @@ defmodule GitasticWeb.DevTunnel do
     end
   end
 
+  @doc """
+  `{:held, port}` when a live server already holds the name, before this one
+  starts; else `:free`.
+  """
+  def held_by do
+    with opts when is_list(opts) <- Application.get_env(:gitastic, __MODULE__) do
+      holder(Path.join(Keyword.fetch!(opts, :caddy_sites), "gitastic.conf"), nil)
+    else
+      _ -> :free
+    end
+  end
+
   # The port the site block points at, when it is another server that answers.
   defp holder(file, our_port) do
     with {:ok, block} <- File.read(file),
