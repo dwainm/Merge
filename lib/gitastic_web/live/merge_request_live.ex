@@ -225,7 +225,7 @@ defmodule GitasticWeb.MergeRequestLive do
             <.checks_pill check={@pill} />
             <.status status={@mr.status} merged={@mr.merged} />
             <.queue_button
-              :if={not MergeRequest.done?(@mr)}
+              :if={@mr.status in [:open, :needs_work]}
               branch={@mr.branch}
               queued={Enum.any?(@queue, &(&1.branch == @mr.branch))}
               class="ml-1 rounded-md border border-(--border) px-2 py-0.5"

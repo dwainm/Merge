@@ -34,13 +34,17 @@ defmodule GitasticWeb.MergeRequestComponents do
       phx-click={if(@queued, do: "queue_remove", else: "queue_add")}
       phx-value-branch={@branch}
       title={if(@queued, do: "In your review queue: click to take it off", else: "Add to queue")}
+      aria-label={if(@queued, do: "Take it off the queue", else: "Add to queue")}
       class={[
         "shrink-0 text-xs font-medium transition hover:bg-(--surface-2)",
         if(@queued, do: "text-(--info-text)", else: "text-(--text-muted) hover:text-(--text)"),
         @class
       ]}
     >
-      {if(@queued, do: "✓ Queued", else: "+ Queue")}
+      {if(@queued, do: "✓", else: "+")}
+      <span class="hidden sm:inline">
+        {if(@queued, do: " Queued", else: " Queue")}
+      </span>
     </button>
     """
   end

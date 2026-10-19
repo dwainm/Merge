@@ -380,7 +380,7 @@ defmodule GitasticWeb.HomeLive do
           </div>
         </.link>
         <.queue_button
-          :if={@queued}
+          :if={@queued && mr.status in [:open, :needs_work]}
           branch={mr.branch}
           queued={MapSet.member?(@queued, mr.branch)}
           class="border-l border-(--border) px-3"

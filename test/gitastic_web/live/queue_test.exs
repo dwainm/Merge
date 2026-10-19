@@ -36,7 +36,7 @@ defmodule GitasticWeb.QueueTest do
     assert has_element?(view, "#queue-tab-#{one}", "Next")
     assert has_element?(view, "#queue-tab-#{two}", "Change 2")
     refute has_element?(view, "#queue-tab-#{two}", "Next")
-    assert has_element?(view, "#queue-button-#{one}", "Queued")
+    assert has_element?(view, "#queue-button-#{one}[aria-label=\"Take it off the queue\"]")
 
     view |> element("#queue-remove-#{one}") |> render_click()
     refute has_element?(view, "#queue-tab-#{one}")
@@ -65,6 +65,6 @@ defmodule GitasticWeb.QueueTest do
     {:ok, view, _html} = live(conn, GitasticWeb.mr_path(one))
     view |> element("#queue-button-#{one}") |> render_click()
     assert has_element?(view, "#queue-tab-#{one}", "Next")
-    assert has_element?(view, "#queue-button-#{one}", "Queued")
+    assert has_element?(view, "#queue-button-#{one}[aria-label=\"Take it off the queue\"]")
   end
 end
