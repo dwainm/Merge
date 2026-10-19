@@ -64,21 +64,21 @@ defmodule GitasticWeb.Layouts do
   # merged or closed one fades out over a few seconds and drops away.
   defp queue_tabs(assigns) do
     ~H"""
-    <nav id="review-queue" class="border-b border-(--border) bg-(--bg)" aria-label="Review queue">
+    <nav id="review-queue" class="border-b border-(--border) bg-(--surface)" aria-label="Review queue">
       <div class="mx-auto flex max-w-7xl items-end gap-1 overflow-x-auto px-4 pt-2 lg:px-6">
-        <span class="mr-1 shrink-0 self-center pb-2 text-xs font-medium text-(--text-faint)">
-          Queue
-        </span>
         <div
           :for={tab <- @tabs}
           id={"queue-tab-#{tab.branch}"}
-          class={[
-            "group flex max-w-[18rem] shrink-0 items-center rounded-t-lg border border-b-0 text-sm transition-colors",
-            tab.branch == @current && "border-(--border) bg-(--surface) text-(--text)",
-            tab.branch != @current &&
-              "border-transparent text-(--text-muted) hover:bg-(--surface-2) hover:text-(--text)",
-            tab.leaving_at && "queue-leaving"
-          ]}
+          class={
+            [
+              "group relative -mb-px flex max-w-[18rem] shrink-0 items-center rounded-t-lg border border-(--border) text-sm transition-colors",
+              # The tab on screen is the page's colour and opens into it.
+              tab.branch == @current && "z-10 border-b-(--bg) bg-(--bg) font-medium text-(--text)",
+              tab.branch != @current &&
+                "bg-(--surface-2) text-(--text-muted) hover:bg-(--bg) hover:text-(--text)",
+              tab.leaving_at && "queue-leaving"
+            ]
+          }
           style={leaving_style(tab)}
         >
           <.link
