@@ -4,6 +4,9 @@ defmodule Mix.Tasks.Gitastic.Serve do
   Starts the server on a free port (or `--port N`), prints its localhost and
   tailnet URLs, writes the localhost one to `~/.gitastic/url` for the other
   commands, and keeps running.
+
+  When another server (the systemd service, usually) already holds the tailnet
+  name, this one runs on localhost only and leaves `~/.gitastic/url` to it.
   """
 
   use Mix.Task
@@ -17,16 +20,29 @@ defmodule Mix.Tasks.Gitastic.Serve do
     Mix.Task.run("app.start")
 
     local = GitasticWeb.base_url(:local)
-    File.mkdir_p!(Path.dirname(Gitastic.CLI.url_file()))
-    File.write!(Gitastic.CLI.url_file(), local <> "\n")
-
     IO.puts("gitastic: #{local}")
 
     case GitasticWeb.DevTunnel.publish() do
-      {:ok, url} -> IO.puts("Tailnet:  #{url}")
-      :none -> :ok
+      {:ok, url} ->
+        IO.puts("Tailnet:  #{url}")
+        write_url(local)
+
+      :none ->
+        write_url(local)
+
+      {:held, port} ->
+        IO.puts("""
+        The tailnet name is held by another gitastic server on localhost:#{port}
+        (the service: systemctl --user status gitastic). This one is localhost only.
+        Point commands at it with: GITASTIC_URL=#{local} gitastic mr ...\
+        """)
     end
 
     unless IEx.started?(), do: Process.sleep(:infinity)
+  end
+
+  defp write_url(local) do
+    File.mkdir_p!(Path.dirname(Gitastic.CLI.url_file()))
+    File.write!(Gitastic.CLI.url_file(), local <> "\n")
   end
 end

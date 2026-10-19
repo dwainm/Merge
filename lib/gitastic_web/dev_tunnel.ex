@@ -6,6 +6,9 @@ defmodule GitasticWeb.DevTunnel do
   reloads Caddy, and remembers the URL for links (`GitasticWeb.mr_url/1`). On a
   machine without Tailscale or the Caddy sites directory it does nothing.
 
+  One server holds the name at a time: when the site block points at another
+  port that still answers (the systemd service, usually), it is left alone.
+
   Configured in `config/dev.exs`:
 
       config :gitastic, GitasticWeb.DevTunnel,
@@ -15,22 +18,42 @@ defmodule GitasticWeb.DevTunnel do
 
   require Logger
 
-  @doc "Publishes the server. Returns `{:ok, url}`, or `:none` when there is no tunnel here."
+  @doc """
+  Publishes the server. Returns `{:ok, url}`, `{:held, port}` when another live
+  server holds the name, or `:none` when there is no tunnel here.
+  """
   def publish do
     with opts when is_list(opts) <- Application.get_env(:gitastic, __MODULE__),
          {:ok, {_ip, port}} <- GitasticWeb.Endpoint.server_info(:http),
          :ok <- tailscale_running(),
-         {:ok, sites} <- caddy_sites(opts) do
+         {:ok, sites} <- caddy_sites(opts),
+         file = Path.join(sites, "gitastic.conf"),
+         :free <- holder(file, port) do
       host = Keyword.fetch!(opts, :host)
       url = "https://#{host}"
 
-      File.write!(Path.join(sites, "gitastic.conf"), site_block(host, port))
+      File.write!(file, site_block(host, port))
       System.cmd("systemctl", ["--user", "reload", "caddy-dev"], stderr_to_stdout: true)
       Application.put_env(:gitastic, :tunnel_url, url)
       Logger.info("Tailnet: #{url} -> localhost:#{port}")
       {:ok, url}
     else
+      {:held, port} -> {:held, port}
       _ -> :none
+    end
+  end
+
+  # The port the site block points at, when it is another server that answers.
+  defp holder(file, our_port) do
+    with {:ok, block} <- File.read(file),
+         [_, port] <- Regex.run(~r/reverse_proxy localhost:(\d+)/, block),
+         port = String.to_integer(port),
+         true <- port != our_port,
+         {:ok, socket} <- :gen_tcp.connect(~c"localhost", port, [], 1_000) do
+      :gen_tcp.close(socket)
+      {:held, port}
+    else
+      _ -> :free
     end
   end
 
