@@ -7,5 +7,6 @@ export GITASTIC_CWD="$PWD"
 cd "$root"
 case "$1" in
   serve) shift; exec mix gitastic.serve "$@" ;;
-  *) exec mix gitastic "$@" ;;
+  # Quiet, so a compile message never lands in what an agent reads.
+  *) MIX_QUIET=1 exec mix gitastic "$@" ;;
 esac

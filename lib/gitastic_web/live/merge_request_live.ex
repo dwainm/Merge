@@ -218,9 +218,7 @@ defmodule GitasticWeb.MergeRequestLive do
         class="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"
       >
         <span>
-          {MapSet.size(@new_since)} new {if MapSet.size(@new_since) == 1,
-            do: "commit",
-            else: "commits"} since your last review.
+          {count(MapSet.size(@new_since), "new commit")} since your last review.
         </span>
         <.link
           patch={GitasticWeb.mr_path(@mr.branch) <> "?since=review"}
@@ -236,7 +234,7 @@ defmodule GitasticWeb.MergeRequestLive do
           class="overflow-hidden rounded-lg border border-zinc-200 bg-white lg:sticky lg:top-4 lg:order-last"
         >
           <div class="flex items-center justify-between border-b border-zinc-200 bg-zinc-50 px-3 py-2 text-xs font-medium text-zinc-600">
-            <span>{length(@mr.commits)} commits, newest first</span>
+            <span>{count(@mr.commits, "commit")}, newest first</span>
           </div>
           <div class="max-h-56 overflow-y-auto lg:max-h-[calc(100vh-8rem)]">
             <.commit_list
@@ -280,7 +278,7 @@ defmodule GitasticWeb.MergeRequestLive do
               <span class="truncate">{@selected.subject}</span>
             </span>
             <span class="ml-auto text-xs text-zinc-500">
-              {length(@files)} files ·
+              {count(@files, "file")} ·
               <span class="text-emerald-700">+{Enum.sum_by(@files, & &1.additions)}</span>
               <span class="text-rose-700">−{Enum.sum_by(@files, & &1.deletions)}</span>
             </span>
@@ -321,7 +319,7 @@ defmodule GitasticWeb.MergeRequestLive do
                   rows="3"
                   phx-mounted={JS.focus()}
                   placeholder="Comment on this line"
-                  class="w-full rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm focus:border-sky-500 focus:outline-none"
+                  class="w-full rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-base focus:border-sky-500 sm:text-sm focus:outline-none"
                 >{@line_form[:body].value}</textarea>
                 <div class="flex gap-2">
                   <button class="rounded-md bg-zinc-900 px-3 py-1.5 text-sm text-white hover:bg-zinc-700">
@@ -391,7 +389,7 @@ defmodule GitasticWeb.MergeRequestLive do
             id="comment-body"
             rows="3"
             placeholder="A general comment"
-            class="w-full rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm focus:border-sky-500 focus:outline-none"
+            class="w-full rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-base focus:border-sky-500 sm:text-sm focus:outline-none"
           >{@comment_form[:body].value}</textarea>
           <button class="rounded-md bg-white px-3 py-1.5 text-sm ring-1 ring-zinc-300 hover:bg-zinc-50">
             Comment
@@ -410,7 +408,7 @@ defmodule GitasticWeb.MergeRequestLive do
             id="decision-body"
             rows="2"
             placeholder="A note with the decision (needed to reject)"
-            class="w-full rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-sm focus:border-sky-500 focus:outline-none"
+            class="w-full rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-base focus:border-sky-500 sm:text-sm focus:outline-none"
           >{@decision_form[:body].value}</textarea>
           <div class="flex gap-2">
             <button

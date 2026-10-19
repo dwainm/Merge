@@ -52,9 +52,9 @@ defmodule GitasticWeb.HomeLive do
             </div>
             <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-zinc-500">
               <span class="font-mono">{mr.branch} → {mr.base}</span>
-              <span>{length(mr.commits)} commits</span>
-              <span>{length(mr.files)} files</span>
-              <span :if={mr.comments != []}>{length(mr.comments)} comments</span>
+              <span>{count(mr.commits, "commit")}</span>
+              <span>{count(mr.files, "file")}</span>
+              <span :if={mr.comments != []}>{count(mr.comments, "comment")}</span>
               <span>by {mr.opened_by}</span>
             </div>
           </.link>

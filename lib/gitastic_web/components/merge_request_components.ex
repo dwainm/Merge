@@ -104,23 +104,21 @@ defmodule GitasticWeb.MergeRequestComponents do
                 >
                   {line.new}
                 </td>
-                <td class="whitespace-pre pr-4 pl-2">
-                  <span class="select-none text-zinc-400">{marker(line.type)}</span>
-                  <%= if line.html do %>
-                    {Phoenix.HTML.raw(line.html)}
-                  <% else %>
-                    {line.text}
-                  <% end %>
-                </td>
+                <%!-- phx-no-format: whitespace here is the code's own. --%>
+                <td class="whitespace-pre pr-4 pl-2" phx-no-format><span class="select-none text-zinc-400">{marker(line.type)}</span>{code(line)}</td>
               </tr>
               <tr :for={comment <- comments_on(@line_comments, @file.path, line)}>
                 <td colspan="3" class="border-y border-zinc-200 bg-zinc-50 px-3 py-2 font-sans">
-                  {render_slot(@comment, comment)}
+                  <div class="sticky left-3 max-w-[calc(100vw-4rem)] lg:max-w-2xl">
+                    {render_slot(@comment, comment)}
+                  </div>
                 </td>
               </tr>
               <tr :if={@picked && line.type != :note && @picked == line_key(@file.path, line)}>
                 <td colspan="3" class="border-y border-zinc-200 bg-zinc-50 px-3 py-2 font-sans">
-                  {render_slot(@comment_form)}
+                  <div class="sticky left-3 max-w-[calc(100vw-4rem)] lg:max-w-2xl">
+                    {render_slot(@comment_form)}
+                  </div>
                 </td>
               </tr>
             <% end %>
@@ -133,6 +131,9 @@ defmodule GitasticWeb.MergeRequestComponents do
 
   defp comments_on(_comments, _path, %{type: :note}), do: []
   defp comments_on(comments, path, line), do: Map.get(comments, line_key(path, line), [])
+
+  defp code(%{html: nil, text: text}), do: text
+  defp code(%{html: html}), do: Phoenix.HTML.raw(html)
 
   defp marker(:add), do: "+"
   defp marker(:del), do: "-"
@@ -170,6 +171,11 @@ defmodule GitasticWeb.MergeRequestComponents do
     </ol>
     """
   end
+
+  @doc "`3 files`, `1 file`."
+  def count(n, word) when is_list(n), do: count(length(n), word)
+  def count(1, word), do: "1 #{word}"
+  def count(n, word), do: "#{n} #{word}s"
 
   @doc "A short relative time for an ISO 8601 string or a DateTime."
   def ago(iso) when is_binary(iso) do
