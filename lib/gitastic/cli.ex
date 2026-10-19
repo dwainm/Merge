@@ -90,7 +90,7 @@ defmodule Gitastic.CLI do
   end
 
   defp command(["mr", "list"], _opts) do
-    with {:ok, %{"merge_requests" => mrs}} <- request(:get, "/api/merge_requests", nil) do
+    with {:ok, %{"merge_requests" => mrs}} <- get("/api/merge_requests") do
       if mrs == [], do: IO.puts("No open merge requests.")
 
       for mr <- mrs do
@@ -118,12 +118,23 @@ defmodule Gitastic.CLI do
   defp state(other), do: other
 
   # Holds a request open on the server until there is news, and asks again
-  # each time the server's hold runs out.
-  defp wait(branch, as) do
+  # each time the server's hold runs out. A server that is restarting (refused,
+  # or answering 5xx) is asked again every few seconds: merge requests survive it.
+  defp wait(branch, as, retrying? \\ false) do
     case post("/api/wait", %{branch: branch, as: as}) do
-      {:ok, %{"status" => "waiting"}} -> wait(branch, as)
-      {:ok, %{"text" => text}} -> IO.write(text)
-      {:error, _} = error -> error
+      {:ok, %{"status" => "waiting"}} ->
+        wait(branch, as)
+
+      {:ok, %{"text" => text}} ->
+        IO.write(text)
+
+      {:retry, message} ->
+        unless retrying?, do: IO.puts(:stderr, message <> " Trying again until it is back.")
+        Process.sleep(3_000)
+        wait(branch, as, true)
+
+      {:error, _} = error ->
+        error
     end
   end
 
@@ -142,7 +153,21 @@ defmodule Gitastic.CLI do
 
   defp agent(opts), do: opts[:as] || System.get_env("GITASTIC_AS") || Path.basename(cwd())
 
-  defp post(path, body), do: request(:post, path, body)
+  defp post("/api/wait" = path, body), do: request(:post, path, body)
+
+  defp post(path, body) do
+    case request(:post, path, body) do
+      {:retry, message} -> {:error, message <> " Is it running? Start one with: gitastic serve"}
+      other -> other
+    end
+  end
+
+  defp get(path) do
+    case request(:get, path, nil) do
+      {:retry, message} -> {:error, message <> " Is it running? Start one with: gitastic serve"}
+      other -> other
+    end
+  end
 
   defp request(method, path, body) do
     with {:ok, base} <- server_url() do
@@ -155,8 +180,9 @@ defmodule Gitastic.CLI do
            ) do
         {:ok, %{status: 200, body: body}} -> {:ok, body}
         {:ok, %{body: %{"error" => message}}} -> {:error, message}
+        {:ok, %{status: status}} when status >= 500 -> {:retry, "The server answered #{status}."}
         {:ok, %{status: status}} -> {:error, "The server answered #{status}."}
-        {:error, _} -> {:error, "No gitastic server at #{base}. Start one with: gitastic serve"}
+        {:error, _} -> {:retry, "No gitastic server at #{base}."}
       end
     end
   end
