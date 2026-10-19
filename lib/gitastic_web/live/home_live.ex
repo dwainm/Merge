@@ -194,7 +194,7 @@ defmodule GitasticWeb.HomeLive do
         <li :for={run <- @drift.ci}>
           <a href={run["url"]} class="text-(--text-2) hover:underline">
             <span class={run_colour(run)}>●</span>
-            {run["workflowName"]}: {run["conclusion"] || run["status"]}
+            {run["workflowName"]}: {run_state(run)}
             <span class="font-mono text-(--text-faint)">{String.slice(run["headSha"], 0, 7)}</span>
           </a>
         </li>
@@ -202,6 +202,10 @@ defmodule GitasticWeb.HomeLive do
     </section>
     """
   end
+
+  # gh gives a running run's conclusion as "", so its status says more.
+  defp run_state(%{"conclusion" => c}) when c not in [nil, ""], do: c
+  defp run_state(%{"status" => status}), do: String.replace(status, "_", " ")
 
   defp run_colour(%{"conclusion" => "success"}), do: "text-(--ok-text)"
 
