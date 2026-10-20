@@ -7,18 +7,18 @@
 # General application configuration
 import Config
 
-config :gitastic,
+config :merge,
   generators: [timestamp_type: :utc_datetime]
 
 # Configure the endpoint
-config :gitastic, GitasticWeb.Endpoint,
+config :merge, MergeWeb.Endpoint,
   url: [host: "localhost"],
   adapter: Bandit.PhoenixAdapter,
   render_errors: [
-    formats: [html: GitasticWeb.ErrorHTML, json: GitasticWeb.ErrorJSON],
+    formats: [html: MergeWeb.ErrorHTML, json: MergeWeb.ErrorJSON],
     layout: false
   ],
-  pubsub_server: Gitastic.PubSub,
+  pubsub_server: Merge.PubSub,
   live_view: [signing_salt: "AUYdQrV7"]
 
 # Configure LiveView
@@ -29,7 +29,7 @@ config :phoenix_live_view,
 # Configure esbuild (the version is required)
 config :esbuild,
   version: "0.25.4",
-  gitastic: [
+  merge: [
     args:
       ~w(js/app.js --bundle --target=es2022 --outdir=../priv/static/assets/js --external:/fonts/* --external:/images/* --alias:@=.),
     cd: Path.expand("../assets", __DIR__),
@@ -39,7 +39,7 @@ config :esbuild,
 # Configure tailwind (the version is required)
 config :tailwind,
   version: "4.3.3",
-  gitastic: [
+  merge: [
     args: ~w(
       --input=assets/css/app.css
       --output=priv/static/assets/css/app.css

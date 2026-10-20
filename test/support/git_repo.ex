@@ -1,4 +1,4 @@
-defmodule Gitastic.GitRepo do
+defmodule Merge.GitRepo do
   @moduledoc "Throwaway git repositories for tests."
 
   import ExUnit.Callbacks, only: [on_exit: 1]
@@ -15,7 +15,7 @@ defmodule Gitastic.GitRepo do
   out. Removed when the test ends.
   """
   def new(branch \\ "feature") do
-    dir = Path.join(System.tmp_dir!(), "gitastic-test-#{System.unique_integer([:positive])}")
+    dir = Path.join(System.tmp_dir!(), "merge-test-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
     on_exit(fn -> File.rm_rf!(dir) end)
 
@@ -30,7 +30,7 @@ defmodule Gitastic.GitRepo do
   pushed. Returns `{clone, origin}`; both are removed when the test ends.
   """
   def with_origin do
-    root = Path.join(System.tmp_dir!(), "gitastic-pair-#{System.unique_integer([:positive])}")
+    root = Path.join(System.tmp_dir!(), "merge-pair-#{System.unique_integer([:positive])}")
     origin = Path.join(root, "origin.git")
     clone = Path.join(root, "clone")
     File.mkdir_p!(origin)

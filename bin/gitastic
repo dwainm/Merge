@@ -1,12 +1,6 @@
 #!/bin/sh
-# The gitastic command, runnable from any directory: it remembers where it was
-# run from (the default repo and agent name) and runs the Mix task in the project.
-set -e
-root=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
-export GITASTIC_CWD="$PWD"
-cd "$root"
-case "$1" in
-  serve) shift; exec mix gitastic.serve "$@" ;;
-  # Quiet, so a compile message never lands in what an agent reads.
-  *) MIX_QUIET=1 exec mix gitastic "$@" ;;
-esac
+# The old name. Anything still typing `gitastic` gets `merge`, and the old
+# environment variables are honoured.
+[ -n "$GITASTIC_URL" ] && [ -z "$MERGE_URL" ] && export MERGE_URL="$GITASTIC_URL"
+[ -n "$GITASTIC_AS" ] && [ -z "$MERGE_AS" ] && export MERGE_AS="$GITASTIC_AS"
+exec "$(dirname "$(readlink -f "$0")")/merge" "$@"

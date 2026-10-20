@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// Screenshots of a gitastic server at desktop and phone width.
+// Screenshots of a Merge server at desktop and phone width.
 //
 //   NODE_PATH=/root/projects/dwainm.github.io/node_modules \
-//   node tools/shot.js --url http://localhost:PORT --out /tmp/gitastic-shots [--full] [--dark] /path/one ...
+//   node tools/shot.js --url http://localhost:PORT --out /tmp/merge-shots [--full] [--dark] /path/one ...
 //
 // Writes <out>/<path-slug>.desktop.png (1280x800, full page) and <out>/<path-slug>.phone.png
 // (390x844, the viewport; --full for the whole page). --dark sets the system to dark

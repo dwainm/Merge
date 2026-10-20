@@ -1,4 +1,4 @@
-defmodule GitasticWeb.ConnCase do
+defmodule MergeWeb.ConnCase do
   @moduledoc """
   This module defines the test case to be used by
   tests that require setting up a connection.
@@ -11,7 +11,7 @@ defmodule GitasticWeb.ConnCase do
   we enable the SQL sandbox, so changes done to the database
   are reverted at the end of every test. If you are using
   PostgreSQL, you can even run database tests asynchronously
-  by setting `use GitasticWeb.ConnCase, async: true`, although
+  by setting `use MergeWeb.ConnCase, async: true`, although
   this option is not recommended for other databases.
   """
 
@@ -20,14 +20,14 @@ defmodule GitasticWeb.ConnCase do
   using do
     quote do
       # The default endpoint for testing
-      @endpoint GitasticWeb.Endpoint
+      @endpoint MergeWeb.Endpoint
 
-      use GitasticWeb, :verified_routes
+      use MergeWeb, :verified_routes
 
       # Import conveniences for testing with connections
       import Plug.Conn
       import Phoenix.ConnTest
-      import GitasticWeb.ConnCase
+      import MergeWeb.ConnCase
     end
   end
 

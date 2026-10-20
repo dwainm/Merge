@@ -2,12 +2,12 @@
    https://tailwindcss.com/docs/configuration */
 
 @import "tailwindcss" source(none);
-@import "phoenix-colocated/gitastic/colocated.css";
+@import "phoenix-colocated/merge/colocated.css";
 @source "../css";
 @source "../js";
-@source "../../lib/gitastic_web";
+@source "../../lib/merge_web";
 /* Required for Tailwind to automatically pick up changes in colocated CSS files in dev */
-@source "../../_build/dev/phoenix-colocated/gitastic/*/";
+@source "../../_build/dev/phoenix-colocated/merge/*/";
 
 /* A Tailwind plugin that makes "hero-#{ICON}" classes available.
    The heroicons installation itself is managed by your mix.exs */
@@ -221,7 +221,7 @@
 .code-diff .diff-note td { color: var(--text-faint); }
 .code-diff .diff-pick:hover { background: var(--info-bg); color: var(--link); }
 
-/* A merge request's body, rendered from Markdown (Gitastic.Body). */
+/* A merge request's body, rendered from Markdown (Merge.Body). */
 .markdown > * + * { margin-top: 0.6em; }
 .markdown h1, .markdown h2, .markdown h3, .markdown h4 { font-weight: 600; color: var(--text); margin-top: 1em; }
 .markdown h1 { font-size: 1.15rem; }

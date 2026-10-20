@@ -1,9 +1,9 @@
-defmodule Gitastic.MixProject do
+defmodule Merge.MixProject do
   use Mix.Project
 
   def project do
     [
-      app: :gitastic,
+      app: :merge,
       version: "0.1.0",
       elixir: "~> 1.17",
       elixirc_paths: elixirc_paths(Mix.env()),
@@ -20,7 +20,7 @@ defmodule Gitastic.MixProject do
   # Type `mix help compile.app` for more information.
   def application do
     [
-      mod: {Gitastic.Application, []},
+      mod: {Merge.Application, []},
       extra_applications: [:logger, :runtime_tools]
     ]
   end
@@ -90,10 +90,10 @@ defmodule Gitastic.MixProject do
     [
       setup: ["deps.get", "assets.setup", "assets.build"],
       "assets.setup": ["tailwind.install --if-missing", "esbuild.install --if-missing"],
-      "assets.build": ["compile", "tailwind gitastic", "esbuild gitastic"],
+      "assets.build": ["compile", "tailwind merge", "esbuild merge"],
       "assets.deploy": [
-        "tailwind gitastic --minify",
-        "esbuild gitastic --minify",
+        "tailwind merge --minify",
+        "esbuild merge --minify",
         "phx.digest"
       ],
       precommit: ["compile --warnings-as-errors", "deps.unlock --unused", "format", "test"]

@@ -6,7 +6,7 @@ import Config
 # The watchers configuration can be used to run external
 # watchers to your application. For example, we can use it
 # to bundle .js and .css sources.
-config :gitastic, GitasticWeb.Endpoint,
+config :merge, MergeWeb.Endpoint,
   # Binding to loopback ipv4 address prevents access from other machines.
   # Change to `ip: {0, 0, 0, 0}` to allow access from other machines.
   http: [ip: {127, 0, 0, 1}],
@@ -15,8 +15,8 @@ config :gitastic, GitasticWeb.Endpoint,
   debug_errors: true,
   secret_key_base: "i2M1bVU7gZ/YGenxK8IP7WHb2O3EOheghmqV5pAlLQoXm9rNvwb/om8ah98UZUB9",
   watchers: [
-    esbuild: {Esbuild, :install_and_run, [:gitastic, ~w(--sourcemap=inline --watch)]},
-    tailwind: {Tailwind, :install_and_run, [:gitastic, ~w(--watch)]}
+    esbuild: {Esbuild, :install_and_run, [:merge, ~w(--sourcemap=inline --watch)]},
+    tailwind: {Tailwind, :install_and_run, [:merge, ~w(--watch)]}
   ]
 
 # ## SSL Support
@@ -43,7 +43,7 @@ config :gitastic, GitasticWeb.Endpoint,
 # different ports.
 
 # Enable dev routes for dashboard and mailbox
-config :gitastic, dev_routes: true
+config :merge, dev_routes: true
 
 # Do not include metadata nor timestamps in development logs
 config :logger, :default_formatter, format: "[$level] $message\n"
@@ -63,8 +63,8 @@ config :phoenix_live_view,
   # Enable helpful, but potentially expensive runtime checks
   enable_expensive_runtime_checks: true
 
-# Publishes `gitastic serve` on the tailnet through the Caddy dev proxy
-# (see GitasticWeb.DevTunnel). Does nothing without Tailscale and Caddy.
-config :gitastic, GitasticWeb.DevTunnel,
-  host: "gitastic.dev.dayofplenty.com",
+# Publishes `merge serve` on the tailnet through the Caddy dev proxy
+# (see MergeWeb.DevTunnel). Does nothing without Tailscale and Caddy.
+config :merge, MergeWeb.DevTunnel,
+  host: "merge.dev.dayofplenty.com",
   caddy_sites: "/etc/caddy/sites"

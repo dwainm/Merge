@@ -12,40 +12,40 @@ import Config
 # If you use `mix release`, you need to explicitly enable the server
 # by passing the PHX_SERVER=true when you start it:
 #
-#     PHX_SERVER=true bin/gitastic start
+#     PHX_SERVER=true bin/merge start
 #
 # Alternatively, you can use `mix phx.gen.release` to generate a `bin/server`
 # script that automatically sets the env var above.
 if System.get_env("PHX_SERVER") do
-  config :gitastic, GitasticWeb.Endpoint, server: true
+  config :merge, MergeWeb.Endpoint, server: true
 end
 
-config :gitastic, GitasticWeb.Endpoint,
-  # Port 0 asks the OS for a free port; `gitastic serve --port N` sets PORT.
+config :merge, MergeWeb.Endpoint,
+  # Port 0 asks the OS for a free port; `merge serve --port N` sets PORT.
   http: [port: String.to_integer(System.get_env("PORT", "0"))]
 
 # How often the watcher fetches origin and checks main and the merges; off in tests.
-config :gitastic, :watch_ms, if(config_env() != :test, do: 60_000)
+config :merge, :watch_ms, if(config_env() != :test, do: 60_000)
 
-# Where each merge request is kept on disk (Gitastic.Store). Tests keep nothing,
-# and neither does an ad-hoc `gitastic serve` beside the main one (GITASTIC_STORE=off).
-config :gitastic,
+# Where each merge request is kept on disk (Merge.Store). Tests keep nothing,
+# and neither does an ad-hoc `merge serve` beside the main one (MERGE_STORE=off).
+config :merge,
        :store_dir,
-       if(config_env() != :test and System.get_env("GITASTIC_STORE") != "off",
-         do: Path.join(System.user_home!(), ".gitastic/merge_requests")
+       if(config_env() != :test and System.get_env("MERGE_STORE") != "off",
+         do: Path.join(System.user_home!(), ".merge/merge_requests")
        )
 
 if config_env() == :dev do
   # Reload browser tabs when matching files change.
-  config :gitastic, GitasticWeb.Endpoint,
+  config :merge, MergeWeb.Endpoint,
     live_reload: [
       web_console_logger: true,
       patterns: [
         # Static assets, except user uploads
         ~r"priv/static/(?!uploads/).*\.(js|css|png|jpeg|jpg|gif|svg)$"E,
         # Router, Controllers, LiveViews and LiveComponents
-        ~r"lib/gitastic_web/router\.ex$"E,
-        ~r"lib/gitastic_web/(controllers|live|components)/.*\.(ex|heex)$"E
+        ~r"lib/merge_web/router\.ex$"E,
+        ~r"lib/merge_web/(controllers|live|components)/.*\.(ex|heex)$"E
       ]
     ]
 end
@@ -65,7 +65,7 @@ if config_env() == :prod do
 
   host = System.get_env("PHX_HOST") || "example.com"
 
-  config :gitastic, GitasticWeb.Endpoint,
+  config :merge, MergeWeb.Endpoint,
     url: [host: host, port: 443, scheme: "https"],
     http: [
       # Enable IPv6 and bind on all interfaces.
@@ -81,7 +81,7 @@ if config_env() == :prod do
   # To get SSL working, you will need to add the `https` key
   # to your endpoint configuration:
   #
-  #     config :gitastic, GitasticWeb.Endpoint,
+  #     config :merge, MergeWeb.Endpoint,
   #       https: [
   #         ...,
   #         port: 443,
@@ -103,7 +103,7 @@ if config_env() == :prod do
   # We also recommend setting `force_ssl` in your config/prod.exs,
   # ensuring no data is ever sent via http, always redirecting to https:
   #
-  #     config :gitastic, GitasticWeb.Endpoint,
+  #     config :merge, MergeWeb.Endpoint,
   #       force_ssl: [hsts: true]
   #
   # Check `Plug.SSL` for all available options in `force_ssl`.

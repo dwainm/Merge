@@ -1,4 +1,6 @@
-# gitastic
+# Merge
+
+The easy workflow for Elixir projects.
 
 Review a branch against `main` on your phone, comment on any line, approve or reject it.
 The agent that opened the merge request is told the outcome, with every comment, on the command line.
@@ -6,40 +8,40 @@ No GitHub and no database: each merge request is a process, gone when the server
 
 ## Commands
 
-`bin/gitastic` works from any directory; link it onto your PATH as `gitastic`.
+`bin/merge` works from any directory; link it onto your PATH as `merge`.
 
-    gitastic serve [--port N]
-        gitastic serve                     # prints http://localhost:<PORT> and https://gitastic.dev.dayofplenty.com
+    merge serve [--port N]
+        merge serve                     # prints http://localhost:<PORT> and https://merge.dev.dayofplenty.com
 
-    gitastic mr open <branch> [--repo PATH] [--base BRANCH] [--title T] [--body B | --body-file F] [--as NAME]
-        cd /root/projects/dayofplenty && gitastic mr open checkin --title "Coffee shop check-in"
+    merge mr open <branch> [--repo PATH] [--base BRANCH] [--title T] [--body B | --body-file F] [--as NAME]
+        cd /root/projects/dayofplenty && merge mr open checkin --title "Coffee shop check-in"
 
-    gitastic mr wait <branch> [--as NAME]
-        gitastic mr wait checkin           # blocks until Approve or Reject, prints it with every comment
+    merge mr wait <branch> [--as NAME]
+        merge mr wait checkin           # blocks until Approve or Reject, prints it with every comment
 
-    gitastic mr addressed <branch> <commit> [--note "..."] [--as NAME]
-        gitastic mr addressed checkin HEAD --note "Kept hello, added the test"
+    merge mr addressed <branch> <commit> [--note "..."] [--as NAME]
+        merge mr addressed checkin HEAD --note "Kept hello, added the test"
 
-    gitastic mr merged <branch> [--commit SHA]
-        gitastic mr merged checkin         # after merging into main; finds the merge commit itself
+    merge mr merged <branch> [--commit SHA]
+        merge mr merged checkin         # after merging into main; finds the merge commit itself
 
-    gitastic mr close <branch>
-        gitastic mr close checkin
+    merge mr close <branch>
+        merge mr close checkin
 
-    gitastic mr list
-        gitastic mr list                   # checkin  open  Coffee shop check-in  (waiting: checkin)  <url>
+    merge mr list
+        merge mr list                   # checkin  open  Coffee shop check-in  (waiting: checkin)  <url>
 
-    gitastic mr watch [--since TIME]
-        gitastic mr watch --since 2h       # 2026-10-19T14:03:22Z comment checkin lib/app.ex:12 reviewer: Why?
+    merge mr watch [--since TIME]
+        merge mr watch --since 2h       # 2026-10-19T14:03:22Z comment checkin lib/app.ex:12 reviewer: Why?
 
 `mr watch` prints one line per event, as it happens, and never returns: `opened`, `comment`,
 `approved`, `needs-work`, `addressed`, `new-commits`, `conflicts`, `merges-cleanly`, `rewritten`,
 `branch-gone`, `merged`, `on-origin`, `closed`, and for `main`: `main-tip`, `checks-running`,
 `checks-passed`, `checks-failed`, `pushed`, `push-failed`. The lines are kept in
-`~/.gitastic/events.log`; `--since` (a time, or an age like `30m`) replays them. It reconnects
+`~/.merge/events.log`; `--since` (a time, or an age like `30m`) replays them. It reconnects
 after a server restart and carries on from the last line it printed. MCP: `watch_events`.
 
-The commands find the server through `~/.gitastic/url` (`GITASTIC_URL` overrides it).
+The commands find the server through `~/.merge/url` (`MERGE_URL` overrides it).
 
 ## main against GitHub
 
@@ -55,10 +57,10 @@ is on main as "Merged", then "On origin" once origin/main has it. The badges: Re
 ## Checks before Push
 
 `serve --check CMD` runs `CMD` (with `sh -c`) on every new tip of local `main`, in a
-checkout of its own (a detached worktree under `~/.gitastic/checks/`), one run at a
+checkout of its own (a detached worktree under `~/.merge/checks/`), one run at a
 time; a tip that's already superseded is skipped. For Day of Plenty:
 
-    --check 'MIX_ENV=test MIX_TEST_PARTITION=_gitastic_checks; export MIX_ENV MIX_TEST_PARTITION;
+    --check 'MIX_ENV=test MIX_TEST_PARTITION=_merge_checks; export MIX_ENV MIX_TEST_PARTITION;
              mix deps.get && mix compile --warnings-as-errors && mix check'
 
 The home card shows "Checks passed / running / failed on <sha>" (with the failing
@@ -79,30 +81,30 @@ tree (`ss -ltnp`, then `/proc/<pid>/cwd`). A tree with a server shows its
 `localhost:<port>`, as a link to tap; one without shows "no server". A branch
 under review links to its merge request, and each merge request's page says the
 same for the tree its branch is checked out in. Read every minute with the
-rest, and when the home page loads. Read-only: gitastic starts and stops nothing.
+rest, and when the home page loads. Read-only: Merge starts and stops nothing.
 
 ## MCP
 
-    claude mcp add --transport http gitastic http://localhost:4747/mcp
+    claude mcp add --transport http merge http://localhost:4747/mcp
 
 Tools: `open_merge_request`, `wait_for_review`, `addressed`, `close_merge_request`, `list_merge_requests`, `watch_events`.
-Use the service's port (4747), or the one `gitastic serve` printed.
+Use the service's port (4747), or the one `merge serve` printed.
 
 ## The service
 
-    systemctl --user enable --now /root/projects/gitastic/systemd/gitastic.service
+    systemctl --user enable --now /root/projects/merge/systemd/merge.service
 
-It runs `gitastic serve --port 4747`, restarts itself, and holds the tailnet name. Any
-`gitastic serve` started while it runs stays on localhost and says so. After pulling
-a change that adds a library: `systemctl --user restart gitastic` (the dev code
+It runs `merge serve --port 4747`, restarts itself, and holds the tailnet name. Any
+`merge serve` started while it runs stays on localhost and says so. After pulling
+a change that adds a library: `systemctl --user restart merge` (the dev code
 reloader picks up code changes, but not new libraries).
 
 ## Decisions
 
-- **The CLI is a shell wrapper around two Mix tasks** (`gitastic.serve`, `gitastic`), not an escript:
+- **The CLI is a shell wrapper around two Mix tasks** (`merge.serve`, `merge`), not an escript:
   an escript can't serve Phoenix's static assets. A client command costs about a second of Mix
   startup. Client commands run with `MIX_QUIET=1` so no compile message reaches an agent.
-- **An agent's name** is `--as`, else `GITASTIC_AS`, else the current directory's name (the
+- **An agent's name** is `--as`, else `MERGE_AS`, else the current directory's name (the
   worktree name, which is the stream's name).
 - **Opening an open branch again** registers the second agent on the same merge request.
 - **`mr wait` returns on every comment and every decision.** Each agent (by name) has a cursor;
@@ -110,7 +112,7 @@ reloader picks up code changes, but not new libraries).
   nothing said while an agent re-arms is missed. It also returns CONFLICTS when the branch stops
   merging cleanly into main (checked every minute, and whenever main moves), naming the files. Run it again after each answer to keep listening.
   It long-polls (50s holds) and rides out a server restart.
-- **Merge requests are kept on disk** under `~/.gitastic/merge_requests/`, one term file each,
+- **Merge requests are kept on disk** under `~/.merge/merge_requests/`, one term file each,
   written on every change and loaded on start.
 - **The review goes in rounds.** A comment belongs to the round it was written in; a decision closes
   the round; `addressed` answers it with a commit and a note, recomputes the diff and opens the next

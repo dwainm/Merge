@@ -1,0 +1,12 @@
+#!/bin/sh
+# The merge command, runnable from any directory: it remembers where it was
+# run from (the default repo and agent name) and runs the Mix task in the project.
+set -e
+root=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+export MERGE_CWD="$PWD"
+cd "$root"
+case "$1" in
+  serve) shift; exec mix merge.serve "$@" ;;
+  # Quiet, so a compile message never lands in what an agent reads.
+  *) MIX_QUIET=1 exec mix merge "$@" ;;
+esac
