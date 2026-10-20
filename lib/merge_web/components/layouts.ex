@@ -40,8 +40,11 @@ defmodule MergeWeb.Layouts do
     ~H"""
     <header class="border-b border-(--border) bg-(--surface)">
       <div class="mx-auto flex max-w-7xl items-center gap-3 px-4 py-3 lg:px-6">
-        <.link navigate={~p"/"} class="font-mono text-sm font-semibold tracking-tight text-(--text)">
-          Merge
+        <.link
+          navigate={~p"/"}
+          class="flex items-center gap-2 font-mono text-sm font-semibold tracking-tight text-(--text)"
+        >
+          <img src={~p"/images/logo.svg"} alt="" class="h-5 w-5" /> Merge
         </.link>
         <span class="text-xs text-(--text-faint)">the easy workflow for Elixir projects</span>
       </div>
