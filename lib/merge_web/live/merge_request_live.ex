@@ -98,7 +98,7 @@ defmodule MergeWeb.MergeRequestLive do
       end
 
     case result do
-      {:ok, _} ->
+      {:ok, added} ->
         flash =
           case params["verdict"] do
             "approve" -> "Approved."
@@ -106,7 +106,15 @@ defmodule MergeWeb.MergeRequestLive do
             _ -> "Commented."
           end
 
-        {:noreply, socket |> assign(review_form: blank_form(:review)) |> put_flash(:info, flash)}
+        # Reloaded here so the new entry is on the page when the event lands.
+        {:ok, mr} = MergeRequest.get(socket.assigns.branch)
+
+        {:noreply,
+         socket
+         |> assign(mr: mr, review_form: blank_form(:review))
+         |> load_files()
+         |> push_event("review-sent", %{to: entry_id(added)})
+         |> put_flash(:info, flash)}
 
       {:error, message} ->
         {:noreply, put_flash(socket, :error, message)}
@@ -121,6 +129,10 @@ defmodule MergeWeb.MergeRequestLive do
   end
 
   defp blank_form(name), do: to_form(%{"body" => ""}, as: name)
+
+  # The DOM id of a comment or decision in the conversation.
+  defp entry_id(%{verdict: _, round: round}), do: "decision-#{round}"
+  defp entry_id(%{id: id}), do: "comment-#{id}"
 
   defp view_commit(%{assigns: %{view: {:commit, sha}}}), do: sha
   defp view_commit(_socket), do: nil
@@ -437,6 +449,54 @@ defmodule MergeWeb.MergeRequestLive do
         <% end %>
       </div>
 
+      <section :if={timeline(@mr) != []} id="conversation" class="mb-4 max-w-3xl space-y-3">
+        <h2 class="text-sm font-semibold text-(--text-2)">Conversation</h2>
+        <%= for item <- sorted_timeline(@mr) do %>
+          <%= case item do %>
+            <% {:comment, c} -> %>
+              <div
+                id={"comment-#{c.id}"}
+                class="rounded-lg border border-(--border) bg-(--surface) px-3 py-2"
+              >
+                <.comment comment={c} addressed={[]} show_location />
+              </div>
+            <% {:decision, d} -> %>
+              <div
+                id={"decision-#{d.round}"}
+                class={[
+                  "rounded-lg px-3 py-2 text-sm",
+                  d.verdict == :approved && "bg-(--ok-bg) text-(--ok-text)",
+                  d.verdict == :needs_work && "bg-(--warn-bg) text-(--warn-text)"
+                ]}
+              >
+                <span class="font-medium">
+                  {if d.verdict == :approved, do: "Approved", else: "Needs work"}
+                </span>
+                <span class="text-xs opacity-70">
+                  by {d.by} at <span class="font-mono">{String.slice(d.head, 0, 7)}</span>, {ago(d.at)}
+                </span>
+                <p :if={d.body != ""} class="mt-1 whitespace-pre-wrap">{d.body}</p>
+              </div>
+            <% {:addressed, a} -> %>
+              <div
+                id={"addressed-#{a.short}"}
+                class="rounded-lg bg-(--info-bg) px-3 py-2 text-sm text-(--info-text)"
+              >
+                <span class="font-medium">{a.by}</span>
+                addressed it in
+                <.link
+                  patch={MergeWeb.mr_path(@mr.branch) <> "?commit=" <> a.sha}
+                  class="font-mono underline"
+                >
+                  {a.short}
+                </.link>
+                <span class="text-xs opacity-70">{ago(a.at)}</span>
+                <p :if={a.note} class="mt-1 whitespace-pre-wrap">{a.note}</p>
+              </div>
+          <% end %>
+        <% end %>
+      </section>
+
       <div
         :if={@new_since && MapSet.size(@new_since) > 0 && @view != :since}
         id="since-review"
@@ -564,54 +624,6 @@ defmodule MergeWeb.MergeRequestLive do
         </section>
       </div>
 
-      <section id="conversation" class="mt-6 max-w-3xl space-y-3">
-        <h2 class="text-sm font-semibold text-(--text-2)">Conversation</h2>
-        <%= for item <- sorted_timeline(@mr) do %>
-          <%= case item do %>
-            <% {:comment, c} -> %>
-              <div
-                id={"comment-#{c.id}"}
-                class="rounded-lg border border-(--border) bg-(--surface) px-3 py-2"
-              >
-                <.comment comment={c} addressed={[]} show_location />
-              </div>
-            <% {:decision, d} -> %>
-              <div
-                id={"decision-#{d.round}"}
-                class={[
-                  "rounded-lg px-3 py-2 text-sm",
-                  d.verdict == :approved && "bg-(--ok-bg) text-(--ok-text)",
-                  d.verdict == :needs_work && "bg-(--warn-bg) text-(--warn-text)"
-                ]}
-              >
-                <span class="font-medium">
-                  {if d.verdict == :approved, do: "Approved", else: "Needs work"}
-                </span>
-                <span class="text-xs opacity-70">
-                  by {d.by} at <span class="font-mono">{String.slice(d.head, 0, 7)}</span>, {ago(d.at)}
-                </span>
-                <p :if={d.body != ""} class="mt-1 whitespace-pre-wrap">{d.body}</p>
-              </div>
-            <% {:addressed, a} -> %>
-              <div
-                id={"addressed-#{a.short}"}
-                class="rounded-lg bg-(--info-bg) px-3 py-2 text-sm text-(--info-text)"
-              >
-                <span class="font-medium">{a.by}</span>
-                addressed it in
-                <.link
-                  patch={MergeWeb.mr_path(@mr.branch) <> "?commit=" <> a.sha}
-                  class="font-mono underline"
-                >
-                  {a.short}
-                </.link>
-                <span class="text-xs opacity-70">{ago(a.at)}</span>
-                <p :if={a.note} class="mt-1 whitespace-pre-wrap">{a.note}</p>
-              </div>
-          <% end %>
-        <% end %>
-      </section>
-
       <%!-- Always at hand at the bottom; .BottomSpace keeps the page's bottom
            clear by the bar's height, so the last file can scroll above it. --%>
       <div
@@ -624,6 +636,7 @@ defmodule MergeWeb.MergeRequestLive do
           for={@review_form}
           id="review-form"
           phx-submit="send"
+          phx-hook=".ReviewSent"
           class="mx-auto flex max-w-7xl flex-col gap-2 px-4 py-2 sm:flex-row sm:items-end lg:px-6"
         >
           <textarea
@@ -661,6 +674,18 @@ defmodule MergeWeb.MergeRequestLive do
           </div>
         </.form>
       </div>
+      <script :type={Phoenix.LiveView.ColocatedHook} name=".ReviewSent">
+        // Once a comment or decision is in, empty the box (the server's value
+        // was empty already, so no diff clears it) and show what was added.
+        export default {
+          mounted() {
+            this.handleEvent("review-sent", ({to}) => {
+              this.el.querySelector("textarea").value = ""
+              document.getElementById(to)?.scrollIntoView({behavior: "smooth", block: "center"})
+            })
+          }
+        }
+      </script>
       <script :type={Phoenix.LiveView.ColocatedHook} name=".BottomSpace">
         // Pads the page by the bar's height, kept up to date as it changes size.
         export default {

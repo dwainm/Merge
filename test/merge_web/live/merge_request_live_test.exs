@@ -64,6 +64,9 @@ defmodule MergeWeb.MergeRequestLiveTest do
     assert {:ok, %{kind: :decision, decision: %{verdict: :needs_work}, comments: []}} =
              MergeRequest.wait(c.branch, "agent", 5_000)
 
+    # The page empties the box and scrolls to the decision.
+    assert_push_event(view, "review-sent", %{to: "decision-0"})
+
     assert has_element?(view, "#decision-0", "Needs work")
     assert has_element?(view, "#file-0", "Why?")
   end
