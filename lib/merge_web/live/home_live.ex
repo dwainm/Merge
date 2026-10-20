@@ -218,15 +218,15 @@ defmodule MergeWeb.HomeLive do
         id="drift-ahead"
         class="rounded-lg border border-(--warn-border) bg-(--warn-bg) p-3"
       >
-        <div class="flex flex-wrap items-center justify-between gap-2">
+        <%!-- One line: how far ahead, the checks of main's tip (the newest commit, just below), the diff. --%>
+        <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
           <h2 class="text-sm font-semibold text-(--warn-text)">
             main is {count(@drift.ahead, "commit")} ahead of GitHub
           </h2>
-          <.link navigate={~p"/drift"} class="text-sm text-(--warn-text) underline">See the diff</.link>
-        </div>
-        <%!-- The checks are on main's tip, the newest commit: just above it. --%>
-        <div class="mt-2">
           <.checks_line sha={@drift.main} status={@checks} id="main-checks" />
+          <.link navigate={~p"/drift"} class="ml-auto text-sm text-(--warn-text) underline">
+            See the diff
+          </.link>
         </div>
         <ol class="mt-1 space-y-1 text-sm">
           <li :for={c <- @drift.ahead} class="flex gap-2">
