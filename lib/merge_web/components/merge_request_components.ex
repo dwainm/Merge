@@ -85,6 +85,8 @@ defmodule MergeWeb.MergeRequestComponents do
     <details
       id={"file-#{@index}"}
       open={@open}
+      phx-hook=".FileFold"
+      data-path={@file.path}
       class="group overflow-hidden rounded-lg border border-(--border) bg-(--surface)"
     >
       <summary class="flex cursor-pointer list-none items-center gap-2 border-b border-(--border) bg-(--surface-2) px-3 py-2 text-xs">
@@ -170,6 +172,29 @@ defmodule MergeWeb.MergeRequestComponents do
         </table>
       </div>
     </details>
+    <script :type={Phoenix.LiveView.ColocatedHook} name=".FileFold">
+      // A file folded or unfolded by hand stays that way across reloads: the
+      // choice is kept per page and file path in localStorage, and put back
+      // on mount and after each patch (which would otherwise restore the
+      // server's default).
+      export default {
+        mounted() {
+          this.key = `merge:fold:${location.pathname}:${this.el.dataset.path}`
+          this.restore()
+          this.onToggle = () => {
+            try { localStorage.setItem(this.key, this.el.open ? "open" : "closed") } catch (_) {}
+          }
+          this.el.addEventListener("toggle", this.onToggle)
+        },
+        updated() { this.restore() },
+        destroyed() { this.el.removeEventListener("toggle", this.onToggle) },
+        restore() {
+          let kept = null
+          try { kept = localStorage.getItem(this.key) } catch (_) {}
+          if (kept !== null) this.el.open = kept === "open"
+        }
+      }
+    </script>
     """
   end
 
