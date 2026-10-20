@@ -85,6 +85,31 @@ defmodule Merge.MergeRequestTest do
     assert {:ok, %{agents: ["agent-a", "late-agent"]}} = MergeRequest.get(c.branch)
   end
 
+  test "an agent's reply sits on the comment's line, others hear it, and its author doesn't", c do
+    {:ok, comment} =
+      MergeRequest.comment(c.branch, %{body: "Why empty?", path: "lib/app.ex", line: 2})
+
+    {:ok, _} = MergeRequest.wait(c.branch, "agent-a", 5_000)
+    assert {:ok, mr} = MergeRequest.get(c.branch)
+    assert MergeRequest.seen_by(mr, comment) == ["agent-a"]
+
+    assert {:ok, %{reply_to: id, path: "lib/app.ex", line: 2, author: "agent-a"}} =
+             MergeRequest.reply(c.branch, comment.id, "On it.", "agent-a")
+
+    assert id == comment.id
+    assert {:ok, :timeout} = MergeRequest.wait(c.branch, "agent-a", 50)
+
+    assert {:ok, %{kind: :comment, comments: [_, %{body: "On it."}]}} =
+             MergeRequest.wait(c.branch, "agent-b", 5_000)
+
+    # A reply is not the reviewer saying what needs work.
+    {:ok, _} = MergeRequest.decide(c.branch, :approved)
+    {:ok, _} = MergeRequest.reply(c.branch, comment.id, "Thanks.", "agent-a")
+    assert {:error, _} = MergeRequest.decide(c.branch, :needs_work, "")
+
+    assert {:error, _} = MergeRequest.reply(c.branch, 999, "Hm.", "agent-a")
+  end
+
   test "rejecting needs a comment", c do
     assert {:error, _} = MergeRequest.decide(c.branch, :needs_work, "")
     assert {:ok, %{status: :open, decisions: []}} = MergeRequest.get(c.branch)

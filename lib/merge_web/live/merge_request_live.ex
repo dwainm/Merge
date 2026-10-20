@@ -211,12 +211,17 @@ defmodule MergeWeb.MergeRequestLive do
 
   # The conversation, in order: comments, decisions and addressed commits.
   defp timeline(mr) do
-    Enum.map(mr.comments, &{:comment, &1}) ++
+    for(c <- mr.comments, !reply?(c), do: {:comment, c}) ++
       Enum.map(mr.decisions, &{:decision, &1}) ++
       Enum.map(mr.addressed, &{:addressed, &1})
   end
 
   defp sorted_timeline(mr), do: Enum.sort_by(timeline(mr), &elem(&1, 1).at, DateTime)
+
+  defp reply?(comment), do: Map.get(comment, :reply_to) != nil
+
+  defp replies_to(mr, comment),
+    do: Enum.filter(mr.comments, &(Map.get(&1, :reply_to) == comment.id))
 
   defp addressed_for(mr, comment), do: Enum.filter(mr.addressed, &(&1.round == comment.round))
 
@@ -458,7 +463,13 @@ defmodule MergeWeb.MergeRequestLive do
                 id={"comment-#{c.id}"}
                 class="rounded-lg border border-(--border) bg-(--surface) px-3 py-2"
               >
-                <.comment comment={c} addressed={[]} show_location />
+                <.comment
+                  comment={c}
+                  addressed={[]}
+                  replies={replies_to(@mr, c)}
+                  seen_by={MergeRequest.seen_by(@mr, c)}
+                  show_location
+                />
               </div>
             <% {:decision, d} -> %>
               <div
@@ -589,7 +600,11 @@ defmodule MergeWeb.MergeRequestLive do
             commentable={not MergeRequest.done?(@mr)}
           >
             <:comment :let={comment}>
-              <.comment comment={comment} addressed={addressed_for(@mr, comment)} />
+              <.comment
+                comment={comment}
+                addressed={addressed_for(@mr, comment)}
+                seen_by={if !reply?(comment), do: MergeRequest.seen_by(@mr, comment), else: []}
+              />
             </:comment>
             <:comment_form>
               <.form
@@ -707,12 +722,15 @@ defmodule MergeWeb.MergeRequestLive do
 
   attr :comment, :map, required: true
   attr :addressed, :list, default: []
+  attr :replies, :list, default: []
+  attr :seen_by, :list, default: []
   attr :show_location, :boolean, default: false
 
   defp comment(assigns) do
     ~H"""
     <div class="text-sm">
       <div class="flex flex-wrap items-baseline gap-x-2 text-xs text-(--text-muted)">
+        <span :if={reply?(@comment)} class="text-(--text-faint)">↳</span>
         <span class="font-medium text-(--text)">{@comment.author}</span>
         <span :if={@show_location && @comment.path} class="font-mono">
           {@comment.path}:{@comment.line}{if @comment.side == "old", do: " (old)"}{if @comment.commit,
@@ -724,6 +742,17 @@ defmodule MergeWeb.MergeRequestLive do
       <p :for={a <- @addressed} class="mt-1 text-xs text-(--info-text)">
         ↳ addressed in <span class="font-mono">{a.short}</span>{if a.note, do: ": " <> a.note}
       </p>
+      <p :if={@seen_by != []} class="mt-1 text-xs text-(--text-muted)">
+        <.icon name="hero-eye-micro" class="size-3.5 align-[-2px]" />
+        Seen by {Enum.join(@seen_by, ", ")}
+      </p>
+      <div
+        :for={r <- @replies}
+        id={"reply-#{r.id}"}
+        class="mt-2 ml-4 rounded-md bg-(--surface-2) px-2.5 py-1.5"
+      >
+        <.comment comment={r} />
+      </div>
     </div>
     """
   end

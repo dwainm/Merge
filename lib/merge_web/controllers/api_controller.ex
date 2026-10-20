@@ -68,6 +68,17 @@ defmodule MergeWeb.ApiController do
     end
   end
 
+  def reply(conn, %{"branch" => branch, "id" => id, "body" => body} = params) do
+    with {id, ""} <- Integer.parse(to_string(id)),
+         {:ok, reply} <- MergeRequest.reply(branch, id, body, params["as"]) do
+      json(conn, %{reply: reply, url: MergeWeb.mr_url(branch)})
+    else
+      :error -> not_found(conn, branch)
+      {:error, message} -> error(conn, 422, message)
+      _ -> error(conn, 422, "#{id} is not a comment id.")
+    end
+  end
+
   def merged(conn, %{"branch" => branch} = params) do
     case MergeRequest.merged(branch, params["commit"]) do
       {:ok, merged} -> json(conn, %{merged: merged, url: MergeWeb.mr_url(branch)})

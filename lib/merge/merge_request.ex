@@ -174,6 +174,17 @@ defmodule Merge.MergeRequest do
   def comment(branch, attrs), do: call(branch, {:comment, Map.new(attrs)})
 
   @doc """
+  An agent's answer to comment `id`, shown under it. It sits on the same line
+  as the comment it answers, the other agents hear it, and its author doesn't.
+  """
+  def reply(branch, id, body, by \\ nil), do: call(branch, {:reply, id, body, by})
+
+  @doc "The agents that have been told about `comment`, other than its author."
+  def seen_by(mr, comment) do
+    for {name, cursor} <- mr.cursors, cursor >= comment.seq, name != comment.author, do: name
+  end
+
+  @doc """
   Approves (`:approved`) or rejects (`:needs_work`) the merge request, closing
   the round and telling every waiting agent. A rejection needs a comment, or a
   comment already written in this round.
@@ -387,7 +398,8 @@ defmodule Merge.MergeRequest do
   end
 
   def handle_call(msg, _from, %{status: status} = state)
-      when status in [:merged, :closed] and elem(msg, 0) in [:comment, :decide, :addressed] do
+      when status in [:merged, :closed] and
+             elem(msg, 0) in [:comment, :reply, :decide, :addressed] do
     {:reply, {:error, "This merge request is #{status}."}, state}
   end
 
@@ -422,9 +434,58 @@ defmodule Merge.MergeRequest do
     end
   end
 
+  def handle_call({:reply, id, body, by}, _from, state) do
+    parent = Enum.find(state.comments, &(&1.id == id))
+    by = blank_to_nil(by) || "agent"
+
+    cond do
+      parent == nil ->
+        {:reply, {:error, "There is no comment #{id}."}, state}
+
+      blank_to_nil(body) == nil ->
+        {:reply, {:error, "A reply needs some text."}, state}
+
+      true ->
+        reply =
+          parent
+          |> Map.take([:path, :line, :side, :commit])
+          |> Map.merge(%{
+            id: state.next_id,
+            body: body,
+            author: by,
+            reply_to: id,
+            round: length(state.decisions),
+            seq: state.seq + 1,
+            at: DateTime.utc_now()
+          })
+
+        # The author already knows what it wrote: move its cursor past it,
+        # unless it had news still to hear.
+        state = register(state, by)
+
+        cursors =
+          if Map.get(state.cursors, by, 0) == state.seq,
+            do: Map.put(state.cursors, by, reply.seq),
+            else: state.cursors
+
+        state = %{
+          state
+          | comments: state.comments ++ [reply],
+            next_id: state.next_id + 1,
+            seq: reply.seq,
+            cursors: cursors
+        }
+
+        Events.emit("reply", state.branch, "to ##{id} #{by}: #{body}")
+        {:reply, {:ok, reply}, changed(tell_waiters(state))}
+    end
+  end
+
   def handle_call({:decide, verdict, body, by}, _from, state) do
     round = length(state.decisions)
-    round_comments = Enum.filter(state.comments, &(&1.round == round))
+    # An agent's replies don't say what needs work.
+    round_comments =
+      Enum.filter(state.comments, &(&1.round == round and Map.get(&1, :reply_to) == nil))
 
     if verdict == :needs_work and body == "" and round_comments == [] do
       {:reply, {:error, "Say what needs work."}, state}

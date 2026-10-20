@@ -22,6 +22,9 @@ No GitHub and no database: each merge request is a process, gone when the server
     merge mr addressed <branch> <commit> [--note "..."] [--as NAME]
         merge mr addressed checkin HEAD --note "Kept hello, added the test"
 
+    merge mr reply <branch> <comment-id> "<answer>" [--as NAME]
+        merge mr reply checkin 3 "On it: moving the check into the action"
+
     merge mr merged <branch> [--commit SHA]
         merge mr merged checkin         # after merging into main; finds the merge commit itself
 

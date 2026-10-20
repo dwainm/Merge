@@ -20,6 +20,7 @@ defmodule Merge.MCP do
   component(Merge.MCP.OpenMergeRequest, name: "open_merge_request")
   component(Merge.MCP.WaitForReview, name: "wait_for_review")
   component(Merge.MCP.Addressed, name: "addressed")
+  component(Merge.MCP.Reply, name: "reply")
   component(Merge.MCP.CloseMergeRequest, name: "close_merge_request")
   component(Merge.MCP.ListMergeRequests, name: "list_merge_requests")
   component(Merge.MCP.WatchEvents, name: "watch_events")

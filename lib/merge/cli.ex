@@ -13,6 +13,7 @@ defmodule Merge.CLI do
   merge mr open <branch> [--repo PATH] [--base BRANCH] [--title T] [--body B | --body-file F] [--as NAME]
   merge mr wait <branch> [--as NAME]      returns on each comment or decision; run it again to keep listening
   merge mr addressed <branch> <commit> [--note "..."] [--as NAME]
+  merge mr reply <branch> <comment-id> "<answer>" [--as NAME]   shown under the comment
   merge mr merged <branch> [--commit SHA]  marks it merged (found on main when no --commit)
   merge mr close <branch>
   merge mr list
@@ -83,6 +84,18 @@ defmodule Merge.CLI do
            }) do
       IO.puts("Addressed in #{a["short"]}. Ready for review again: #{url}")
       IO.puts("Wait for the next decision with: merge mr wait #{branch}")
+    end
+  end
+
+  defp command(["mr", "reply", branch, id | words], opts) when words != [] do
+    with {:ok, %{"url" => url}} <-
+           post("/api/reply", %{
+             branch: branch,
+             id: id,
+             body: Enum.join(words, " "),
+             as: agent(opts)
+           }) do
+      IO.puts("Replied to ##{id}: #{url}")
     end
   end
 

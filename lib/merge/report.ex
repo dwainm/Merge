@@ -5,7 +5,7 @@ defmodule Merge.Report do
 
   @doc """
   The news of a wait as the text an agent reads as its next prompt: COMMENT for
-  new comments, APPROVED or NEEDS WORK for a decision (with the comments since
+  new comments (each with its id, to answer with `merge mr reply`), APPROVED or NEEDS WORK for a decision (with the comments since
   the agent last heard), CONFLICTS when the branch no longer merges cleanly
   into main (also added to the others), or the merge request closing. `via` is `:cli` or
   `:mcp`, for the hint on what to do next.
@@ -38,6 +38,7 @@ defmodule Merge.Report do
       if(url, do: "#{url}\n", else: []),
       "\n",
       Enum.map(o.comments, &comment/1),
+      answer(o.branch, via),
       conflicts(o[:conflicts], via),
       listen(o.branch, via)
     ])
@@ -58,7 +59,11 @@ defmodule Merge.Report do
       if(url, do: "#{url}\n", else: []),
       d.body != "" && "\n#{d.by}: #{d.body}\n",
       o.comments != [] &&
-        ["\nComments since you last heard:\n" | Enum.map(o.comments, &comment/1)],
+        [
+          "\nComments since you last heard:\n",
+          Enum.map(o.comments, &comment/1),
+          answer(o.branch, via)
+        ],
       o[:conflicts] && conflicts(o.conflicts, via),
       d.verdict == :needs_work && next_step(o.branch, via),
       listen(o.branch, via)
@@ -73,6 +78,15 @@ defmodule Merge.Report do
 
   defp next_step(branch, :mcp) do
     "\nWhen it is fixed: call addressed with branch #{branch}, the commit and a note.\n"
+  end
+
+  # Every comment gets an answer, even "on it": the reviewer sees it under theirs.
+  defp answer(branch, :cli) do
+    "\nAnswer each one: merge mr reply #{branch} <id> \"...\"\n"
+  end
+
+  defp answer(branch, :mcp) do
+    "\nAnswer each one: call reply with branch #{branch}, the comment's id and your answer.\n"
   end
 
   defp conflicts(nil, _via), do: []
@@ -100,7 +114,8 @@ defmodule Merge.Report do
 
     at = if c.commit, do: " in #{short(c.commit)}", else: ""
     body = String.replace(c.body, "\n", "\n    ")
-    "- [#{where}#{at}] #{c.author}: #{body}\n"
+    to = if c[:reply_to], do: " (reply to ##{c.reply_to})", else: ""
+    "- ##{c.id} [#{where}#{at}] #{c.author}#{to}: #{body}\n"
   end
 
   defp short(nil), do: "?"
