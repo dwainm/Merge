@@ -1,7 +1,7 @@
 defmodule MergeWeb.HomeLive do
   @moduledoc """
   Where main stands against GitHub (with Push and Pull), then every open merge
-  request, then the merged and closed ones, then every tree and its server.
+  request, then every tree and its server, then the merged and closed ones.
   """
 
   use MergeWeb, :live_view
@@ -185,12 +185,12 @@ defmodule MergeWeb.HomeLive do
         queued={MapSet.new(@queue, & &1.branch)}
       />
 
+      <.servers :if={@servers != []} servers={@servers} branches={@branches} />
+
       <section :if={@done != []} class="mt-8">
         <h2 class="mb-3 text-sm font-semibold text-(--text-muted)">Merged and closed</h2>
         <.mr_list id="done-merge-requests" merge_requests={@done} pills={@pills} />
       </section>
-
-      <.servers :if={@servers != []} servers={@servers} branches={@branches} />
     </Layouts.app>
     """
   end
