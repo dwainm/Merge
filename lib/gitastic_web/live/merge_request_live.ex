@@ -8,7 +8,7 @@ defmodule GitasticWeb.MergeRequestLive do
 
   use GitasticWeb, :live_view
 
-  alias Gitastic.{Checks, Drift, Git, MergeRequest}
+  alias Gitastic.{Checks, Drift, Git, MergeRequest, Servers}
   import GitasticWeb.MergeRequestComponents
 
   # The queue's tabs. A tab dropping out never moves this page.
@@ -21,6 +21,7 @@ defmodule GitasticWeb.MergeRequestLive do
     if connected?(socket) do
       Phoenix.PubSub.subscribe(Gitastic.PubSub, MergeRequest.topic(branch))
       Phoenix.PubSub.subscribe(Gitastic.PubSub, Checks.topic())
+      Phoenix.PubSub.subscribe(Gitastic.PubSub, Servers.topic())
     end
 
     mr =
@@ -32,6 +33,7 @@ defmodule GitasticWeb.MergeRequestLive do
     {:ok,
      socket
      |> assign(branch: branch, mr: mr, picked: nil, page_title: (mr && mr.title) || branch)
+     |> assign(tree: mr && Servers.tree_for(mr, Servers.read()))
      |> assign(line_form: blank_form(:line), review_form: blank_form(:review))}
   end
 
@@ -60,6 +62,10 @@ defmodule GitasticWeb.MergeRequestLive do
 
   def handle_info({:merge_request, mr}, socket) do
     {:noreply, socket |> assign(mr: mr, page_title: mr.title) |> load_files()}
+  end
+
+  def handle_info({:servers, servers}, socket) do
+    {:noreply, assign(socket, tree: Servers.tree_for(socket.assigns.mr, servers))}
   end
 
   @impl true
@@ -241,6 +247,11 @@ defmodule GitasticWeb.MergeRequestLive do
               (waiting now: {Enum.join(@mr.waiting, ", ")})
             </span>
           </span>
+          <span :if={@tree} id="mr-tree" class="inline-flex min-w-0 items-center gap-1.5">
+            in <span class="font-mono">{@tree.name}</span>
+            <.server tree={@tree} />
+          </span>
+          <span :if={!@tree} id="mr-tree" class="text-(--text-faint)">no tree</span>
         </div>
         <div
           :if={@mr.body != ""}

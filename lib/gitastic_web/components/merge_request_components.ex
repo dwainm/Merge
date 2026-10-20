@@ -216,6 +216,36 @@ defmodule GitasticWeb.MergeRequestComponents do
     """
   end
 
+  attr :tree, :map, required: true, doc: "a tree from Gitastic.Servers"
+  attr :id, :string, default: nil
+  attr :class, :string, default: nil
+
+  @doc "A tree's server: a green dot and its URL to tap, or a grey dot and \"no server\"."
+  def server(assigns) do
+    ~H"""
+    <span id={@id} class={["inline-flex min-w-0 items-center gap-1.5", @class]}>
+      <span
+        class={["text-[10px]", (@tree.url && "text-(--ok-text)") || "text-(--text-faint)"]}
+        aria-hidden="true"
+      >
+        ●
+      </span>
+      <a
+        :if={@tree.url}
+        href={@tree.url}
+        target="_blank"
+        rel="noopener"
+        class="min-w-0 truncate text-(--link) hover:underline"
+      >
+        {host(@tree.url)}
+      </a>
+      <span :if={!@tree.url} class="text-(--text-faint)">no server</span>
+    </span>
+    """
+  end
+
+  defp host(url), do: url |> String.replace(~r{^https?://}, "") |> String.trim_trailing("/")
+
   @doc "`3 files`, `1 file`."
   def count(n, word) when is_list(n), do: count(length(n), word)
   def count(1, word), do: "1 #{word}"

@@ -171,19 +171,41 @@ defmodule Gitastic.Git do
   end
 
   defp checked_out_in(repo, branch) do
+    Enum.find_value(worktrees(repo), &(&1.branch == branch && &1.path))
+  end
+
+  @doc """
+  The repo's worktrees that are on disk, the main one first, as `%{path, head,
+  branch}`; `branch` is nil for a detached one. A bare repo itself is left out.
+  """
+  def worktrees(repo) do
     case git(repo, ["worktree", "list", "--porcelain"]) do
       {:ok, out} ->
         out
         |> String.split("\n\n", trim: true)
-        |> Enum.find_value(fn entry ->
-          if String.contains?(entry, "branch refs/heads/#{branch}\n") or
-               String.ends_with?(entry, "branch refs/heads/#{branch}") do
-            entry |> String.split("\n") |> hd() |> String.replace_prefix("worktree ", "")
-          end
-        end)
+        |> Enum.map(&worktree/1)
+        |> Enum.reject(&is_nil/1)
 
       {:error, _} ->
-        nil
+        []
+    end
+  end
+
+  defp worktree(entry) do
+    fields =
+      Map.new(String.split(entry, "\n", trim: true), fn line ->
+        case String.split(line, " ", parts: 2) do
+          [key, value] -> {key, value}
+          [key] -> {key, true}
+        end
+      end)
+
+    unless fields["bare"] || fields["prunable"] do
+      %{
+        path: fields["worktree"],
+        head: fields["HEAD"],
+        branch: fields["branch"] && String.replace_prefix(fields["branch"], "refs/heads/", "")
+      }
     end
   end
 

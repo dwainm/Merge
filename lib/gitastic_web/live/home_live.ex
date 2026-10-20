@@ -1,7 +1,7 @@
 defmodule GitasticWeb.HomeLive do
   @moduledoc """
   Where main stands against GitHub (with Push and Pull), then every open merge
-  request, then the merged and closed ones.
+  request, then the merged and closed ones, then every tree and its server.
   """
 
   use GitasticWeb, :live_view
@@ -9,7 +9,7 @@ defmodule GitasticWeb.HomeLive do
   # How long a successful push's result stays up. A failure stays until the next push.
   @success_ms 10_000
 
-  alias Gitastic.{Checks, Drift, MergeRequest}
+  alias Gitastic.{Checks, Drift, MergeRequest, Servers}
   import GitasticWeb.MergeRequestComponents
 
   # The queue's tabs; it also follows the merge requests for this page.
@@ -20,6 +20,7 @@ defmodule GitasticWeb.HomeLive do
     if connected?(socket) do
       Phoenix.PubSub.subscribe(Gitastic.PubSub, Drift.topic())
       Phoenix.PubSub.subscribe(Gitastic.PubSub, Checks.topic())
+      Phoenix.PubSub.subscribe(Gitastic.PubSub, Servers.topic())
       if Process.whereis(Gitastic.Watcher), do: Gitastic.Watcher.refresh()
     end
 
@@ -28,6 +29,7 @@ defmodule GitasticWeb.HomeLive do
      |> assign(page_title: "Merge requests", busy: nil)
      |> show_push(Drift.last_push())
      |> assign(:drift, Drift.current() || Drift.read())
+     |> assign(:servers, Servers.current() || Servers.read())
      |> load_checks()
      |> load()}
   end
@@ -39,6 +41,8 @@ defmodule GitasticWeb.HomeLive do
     do: {:noreply, socket |> assign(drift: drift) |> load_checks()}
 
   def handle_info({:checks, _sha}, socket), do: {:noreply, socket |> load_checks() |> load()}
+
+  def handle_info({:servers, servers}, socket), do: {:noreply, assign(socket, servers: servers)}
 
   def handle_info(:hide_push, socket) do
     case socket.assigns.last_push do
@@ -120,7 +124,8 @@ defmodule GitasticWeb.HomeLive do
     {done, open} = Enum.split_with(MergeRequest.list(), &MergeRequest.done?/1)
     main = socket.assigns[:drift][:main]
     pills = Map.new(done, &{&1.branch, Checks.for_merge_request(&1, main)})
-    assign(socket, open: open, done: done, pills: pills)
+    branches = MapSet.new(open ++ done, & &1.branch)
+    assign(socket, open: open, done: done, pills: pills, branches: branches)
   end
 
   # The confirmation lists what goes out, and what was checked.
@@ -184,6 +189,8 @@ defmodule GitasticWeb.HomeLive do
         <h2 class="mb-3 text-sm font-semibold text-(--text-muted)">Merged and closed</h2>
         <.mr_list id="done-merge-requests" merge_requests={@done} pills={@pills} />
       </section>
+
+      <.servers :if={@servers != []} servers={@servers} branches={@branches} />
     </Layouts.app>
     """
   end
@@ -342,6 +349,50 @@ defmodule GitasticWeb.HomeLive do
       </p>
       <p class="mt-1 text-xs opacity-70">{ago(@result.at)}</p>
     </div>
+    """
+  end
+
+  attr :servers, :list, required: true, doc: "Gitastic.Servers.read/0"
+  attr :branches, :any, required: true, doc: "MapSet of the branches with a merge request"
+
+  # Every tree of each repo, with its server to tap; a branch under review links to it.
+  defp servers(assigns) do
+    ~H"""
+    <section id="servers" class="mt-8">
+      <h2 class="mb-3 text-sm font-semibold text-(--text-muted)">Trees and servers</h2>
+      <div :for={repo <- @servers} id={"servers-#{repo.name}"} class="mb-4">
+        <h3 class="mb-1 flex items-baseline justify-between gap-3 text-xs">
+          <span class="font-medium text-(--text-2)">{repo.name}</span>
+          <span class="text-(--text-muted)">
+            {count(Enum.count(repo.trees, & &1.url), "server")} up in {count(repo.trees, "tree")}
+          </span>
+        </h3>
+        <ul class="divide-y divide-(--border) overflow-hidden rounded-lg border border-(--border) bg-(--surface)">
+          <li
+            :for={tree <- repo.trees}
+            id={"tree-#{repo.name}-#{tree.name}"}
+            class="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 text-sm"
+          >
+            <span class="font-mono text-(--text)">
+              <.link
+                :if={MapSet.member?(@branches, tree.branch)}
+                navigate={GitasticWeb.mr_path(tree.branch)}
+                class="hover:underline"
+              >
+                {tree.branch}
+              </.link>
+              <span :if={not MapSet.member?(@branches, tree.branch)}>
+                {tree.branch || "(detached)"}
+              </span>
+            </span>
+            <span :if={tree.name != tree.branch} class="text-xs text-(--text-muted)">
+              {tree.name}
+            </span>
+            <.server tree={tree} class="ml-auto" />
+          </li>
+        </ul>
+      </div>
+    </section>
     """
   end
 

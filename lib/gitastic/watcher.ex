@@ -2,7 +2,8 @@ defmodule Gitastic.Watcher do
   @moduledoc """
   Every minute (`config :gitastic, :watch_ms`; nil turns it off): fetches
   origin in each repo the merge requests use, broadcasts the drift of main,
-  and marks merge requests merged when their branch has landed on main.
+  marks merge requests merged when their branch has landed on main, and
+  broadcasts the trees and their servers (`Gitastic.Servers`).
   `refresh/0` does the same at once (the home page asks on load).
   """
 
@@ -35,7 +36,7 @@ defmodule Gitastic.Watcher do
     {:noreply, state}
   end
 
-  @doc "One round: fetch, drift, merges."
+  @doc "One round: fetch, drift, merges, servers."
   def run do
     mrs = MergeRequest.list()
 
@@ -50,6 +51,8 @@ defmodule Gitastic.Watcher do
       MergeRequest.check_branch(mr.branch)
       MergeRequest.check_merged(mr.branch)
     end)
+
+    Gitastic.Servers.refresh()
   end
 
   # Worktrees of one repo share a fetch.

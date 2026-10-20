@@ -70,6 +70,17 @@ per commit on disk.
 The flow for a coordinator: merge into local main (all at once when there are
 several), wait for "Checks passed" on the tip, then Push from the home page.
 
+## Trees and servers
+
+The home page ends with every worktree of each repo the merge requests use, and
+the dev server running in it: a process listening on a TCP port from inside the
+tree (`ss -ltnp`, then `/proc/<pid>/cwd`). A tree with a server shows its
+`.dev-url` (the app's own dev tunnel writes it when the server starts), else
+`localhost:<port>`, as a link to tap; one without shows "no server". A branch
+under review links to its merge request, and each merge request's page says the
+same for the tree its branch is checked out in. Read every minute with the
+rest, and when the home page loads. Read-only: gitastic starts and stops nothing.
+
 ## MCP
 
     claude mcp add --transport http gitastic http://localhost:4747/mcp
