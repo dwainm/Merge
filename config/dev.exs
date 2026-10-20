@@ -65,6 +65,8 @@ config :phoenix_live_view,
 
 # Publishes `merge serve` on the tailnet through the Caddy dev proxy
 # (see MergeWeb.DevTunnel). Does nothing without Tailscale and Caddy.
+# `also:` names the old hosts still answered, so links already handed out keep working.
 config :merge, MergeWeb.DevTunnel,
   host: "merge.dev.dayofplenty.com",
+  also: ["gitastic.dev.dayofplenty.com"],
   caddy_sites: "/etc/caddy/sites"

@@ -13,7 +13,11 @@ defmodule MergeWeb.DevTunnel do
 
       config :merge, MergeWeb.DevTunnel,
         host: "merge.dev.dayofplenty.com",
+        also: ["gitastic.dev.dayofplenty.com"],
         caddy_sites: "/etc/caddy/sites"
+
+  `also:` lists older names the site block keeps answering, so links already
+  handed out stay good; the URL printed and used for new links is `host:`.
   """
 
   require Logger
@@ -32,7 +36,7 @@ defmodule MergeWeb.DevTunnel do
       host = Keyword.fetch!(opts, :host)
       url = "https://#{host}"
 
-      File.write!(file, site_block(host, port))
+      File.write!(file, site_block([host | Keyword.get(opts, :also, [])], port))
       System.cmd("systemctl", ["--user", "reload", "caddy-dev"], stderr_to_stdout: true)
       Application.put_env(:merge, :tunnel_url, url)
       Logger.info("Tailnet: #{url} -> localhost:#{port}")
@@ -83,9 +87,9 @@ defmodule MergeWeb.DevTunnel do
     if File.dir?(sites), do: {:ok, sites}, else: :error
   end
 
-  defp site_block(host, port) do
+  defp site_block(hosts, port) do
     """
-    #{host} {
+    #{Enum.join(hosts, ", ")} {
         root * /etc/caddy/error-pages
 
         reverse_proxy localhost:#{port} {
