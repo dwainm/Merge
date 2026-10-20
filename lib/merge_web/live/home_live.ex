@@ -116,6 +116,11 @@ defmodule MergeWeb.HomeLive do
     assign(socket, checks: checks)
   end
 
+  # The even box: the colour of main's checks, plain when they are off or haven't run.
+  defp even_tone(%{ok: true}), do: "border-(--ok-border) bg-(--ok-bg) text-(--ok-text)"
+  defp even_tone(%{ok: false}), do: "border-(--bad-border) bg-(--bad-bg) text-(--bad-text)"
+  defp even_tone(_), do: "border-(--border) bg-(--surface) text-(--text)"
+
   defp checks_passed?(:off), do: true
   defp checks_passed?(%{ok: ok}), do: ok
   defp checks_passed?(_), do: false
@@ -203,15 +208,29 @@ defmodule MergeWeb.HomeLive do
   defp drift(assigns) do
     ~H"""
     <section id="drift" class="mb-6 space-y-3">
-      <p
+      <%!-- One line: main is on GitHub, at which commit, and how its checks went. The box
+           takes the colour of the checks: green when they passed, red when they failed. --%>
+      <div
         :if={@drift.ahead == [] and @drift.behind == []}
         id="drift-even"
-        class="text-sm text-(--text-muted)"
+        class={["rounded-lg border p-3", even_tone(@checks)]}
       >
-        main is on GitHub (<span class="font-mono">{String.slice(@drift.main, 0, 7)}</span>)
-      </p>
+        <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <h2 class="text-sm font-semibold">
+            main is on GitHub at
+            <span class="font-mono font-normal">{String.slice(@drift.main, 0, 7)}</span>
+          </h2>
+          <.checks_line
+            sha={@drift.main}
+            status={@checks}
+            id="main-checks"
+            show_sha={false}
+            class="ml-auto"
+          />
+        </div>
+      </div>
 
-      <.checks_line :if={@drift.ahead == []} sha={@drift.main} status={@checks} />
+      <.checks_line :if={@drift.behind != []} sha={@drift.main} status={@checks} />
 
       <div
         :if={@drift.ahead != []}

@@ -339,28 +339,37 @@ defmodule MergeWeb.MergeRequestComponents do
   attr :status, :any, required: true, doc: "Merge.Checks.status/1, or :off"
   attr :lead, :string, default: nil, doc: "what comes before, e.g. \"main at\""
   attr :id, :string, default: "checks"
+  attr :show_sha, :boolean, default: true, doc: "false when the commit is already named beside it"
+  attr :class, :string, default: nil
 
   @doc "Where the checks of a commit stand, with the end of the log when they failed."
   def checks_line(%{status: :off} = assigns), do: ~H""
 
   def checks_line(assigns) do
-    assigns = assign(assigns, short: String.slice(assigns.sha, 0, 7))
+    assigns =
+      assign(assigns,
+        short: String.slice(assigns.sha, 0, 7),
+        on_sha?: assigns.show_sha and is_nil(assigns.lead)
+      )
 
     ~H"""
-    <div id={@id} class="text-sm">
+    <div id={@id} class={["text-sm", @class]}>
       <p class="flex flex-wrap items-baseline gap-x-2">
         <span :if={@lead} class="text-(--text-muted)">{@lead} <span class="font-mono">{@short}</span>:</span>
         <%= case @status do %>
           <% %{ok: true} = r -> %>
             <span class="font-medium text-(--ok-text)">✓ Checks passed</span>
-            <span :if={!@lead} class="text-(--text-muted)">on <span class="font-mono">{@short}</span></span>
+            <span :if={@on_sha?} class="text-(--text-muted)">on
+            <span class="font-mono">{@short}</span></span>
             <span class="text-xs text-(--text-faint)">{took(r)}</span>
           <% %{ok: false} -> %>
             <span class="font-medium text-(--bad-text)">✗ Checks failed</span>
-            <span :if={!@lead} class="text-(--text-muted)">on <span class="font-mono">{@short}</span></span>
+            <span :if={@on_sha?} class="text-(--text-muted)">on
+            <span class="font-mono">{@short}</span></span>
           <% {:running, at} -> %>
             <span class="font-medium text-(--warn-text)">● Checks running</span>
-            <span :if={!@lead} class="text-(--text-muted)">on <span class="font-mono">{@short}</span></span>
+            <span :if={@on_sha?} class="text-(--text-muted)">on
+            <span class="font-mono">{@short}</span></span>
             <span class="text-xs text-(--text-faint)">started {ago(at)}</span>
           <% {:queued, _} -> %>
             <span class="font-medium text-(--warn-text)">Checks queued</span>
