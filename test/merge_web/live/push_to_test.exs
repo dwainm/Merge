@@ -38,4 +38,27 @@ defmodule MergeWeb.PushToTest do
     assert %{ahead: [%{short: ^two}], behind: []} = Drift.read(repo)
     refute has_element?(view, "#push-to-#{one}")
   end
+
+  test "each commit links to the diff up to it, which leaves out the ones above", %{
+    conn: conn,
+    one: one,
+    two: two
+  } do
+    {:ok, view, _html} = live(conn, ~p"/")
+    assert has_element?(view, "#diff-#{one}")
+    assert has_element?(view, "#diff-#{two}")
+
+    {:ok, page, _html} =
+      view |> element("#diff-#{one}") |> render_click() |> follow_redirect(conn)
+
+    assert has_element?(page, "h1", "main up to #{one} against GitHub")
+    assert has_element?(page, "#drift-commit-#{two}.opacity-50")
+    refute has_element?(page, "#drift-commit-#{one}.opacity-50")
+    assert has_element?(page, "#diff", "ONE.md")
+    refute has_element?(page, "#diff", "TWO.md")
+
+    {:ok, whole, _html} = live(conn, ~p"/drift")
+    assert has_element?(whole, "#diff", "TWO.md")
+    refute has_element?(whole, "#drift-commit-#{two}.opacity-50")
+  end
 end

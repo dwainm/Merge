@@ -1,5 +1,8 @@
 defmodule MergeWeb.DriftLive do
-  @moduledoc "What local main has that GitHub hasn't: the diff origin/main...main."
+  @moduledoc """
+  What local main has that GitHub hasn't: the diff origin/main...main, or at
+  `/drift/<sha>` only up to one of the commits ahead (what its Push would send).
+  """
 
   use MergeWeb, :live_view
 
@@ -7,12 +10,14 @@ defmodule MergeWeb.DriftLive do
   import MergeWeb.MergeRequestComponents
 
   @impl true
-  def mount(_params, _session, socket) do
+  def mount(params, _session, socket) do
     repo = Drift.repo()
+    drift = Drift.read(repo)
+    to = commit(params["sha"], drift)
 
     files =
       with repo when is_binary(repo) <- repo,
-           {:ok, files} <- Git.branch_diff(repo, "origin/main", "main") do
+           {:ok, files} <- Git.branch_diff(repo, "origin/main", to) do
         files
       else
         _ -> []
@@ -21,10 +26,27 @@ defmodule MergeWeb.DriftLive do
     {:ok,
      assign(socket,
        page_title: "main against GitHub",
-       drift: Drift.read(repo),
+       drift: drift,
+       to: to,
+       in_diff: in_diff(drift, to),
        files: files
      )}
   end
+
+  # The commit the diff goes up to: one of those ahead when the URL names one, else main.
+  defp commit(sha, %{ahead: ahead}) when is_binary(sha) do
+    Enum.find_value(ahead, "main", &(String.starts_with?(&1.sha, sha) && &1.sha))
+  end
+
+  defp commit(_sha, _drift), do: "main"
+
+  # The shas of the commits the diff covers: those from `to` down.
+  defp in_diff(%{ahead: ahead}, "main"), do: MapSet.new(ahead, & &1.sha)
+
+  defp in_diff(%{ahead: ahead}, to),
+    do: ahead |> Enum.drop_while(&(&1.sha != to)) |> MapSet.new(& &1.sha)
+
+  defp in_diff(_drift, _to), do: MapSet.new()
 
   @impl true
   def render(assigns) do
@@ -32,9 +54,13 @@ defmodule MergeWeb.DriftLive do
     <Layouts.app flash={@flash}>
       <header class="mb-4">
         <.link navigate={~p"/"} class="text-sm text-(--link)">← Merge requests</.link>
-        <h1 class="mt-2 text-lg font-semibold">main against GitHub</h1>
+        <h1 class="mt-2 text-lg font-semibold">
+          main<span :if={@to != "main"}> up to {String.slice(@to, 0, 7)}</span> against GitHub
+        </h1>
         <p :if={@drift} class="mt-1 text-xs text-(--text-muted)">
-          <span class="font-mono">origin/main...main</span>
+          <span class="font-mono">origin/main...{if @to == "main",
+            do: "main",
+            else: String.slice(@to, 0, 7)}</span>
           · {count(@drift.ahead, "commit")} ahead · {count(@drift.behind, "commit")} behind
         </p>
       </header>
@@ -47,9 +73,19 @@ defmodule MergeWeb.DriftLive do
           <div class="border-b border-(--border) bg-(--surface-2) px-3 py-2 text-xs font-medium text-(--text-2)">
             Not on GitHub yet, newest first
           </div>
+          <%!-- Each commit links to the diff up to it; the ones above the current one are dimmed. --%>
           <ol id="drift-commits" class="divide-y divide-(--border) text-sm">
-            <li :for={c <- @drift.ahead} class="px-3 py-2">
-              <span class="font-mono text-xs text-(--link)">{c.short}</span>
+            <li
+              :for={c <- @drift.ahead}
+              id={"drift-commit-#{c.short}"}
+              class={["px-3 py-2", not MapSet.member?(@in_diff, c.sha) && "opacity-50"]}
+            >
+              <.link
+                navigate={~p"/drift/#{c.sha}"}
+                class="font-mono text-xs text-(--link) hover:underline"
+              >
+                {c.short}
+              </.link>
               <div class="text-(--text)">{c.subject}</div>
               <div class="text-xs text-(--text-faint)">{c.author} · {ago(c.date)}</div>
             </li>

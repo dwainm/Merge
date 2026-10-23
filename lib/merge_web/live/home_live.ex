@@ -257,18 +257,24 @@ defmodule MergeWeb.HomeLive do
           <h2 class="text-sm font-semibold text-(--warn-text)">
             main is {count(@drift.ahead, "commit")} ahead of GitHub
           </h2>
-          <.checks_line sha={@drift.main} status={@checks} id="main-checks" />
-          <.link navigate={~p"/drift"} class="ml-auto text-sm text-(--warn-text) underline">
-            See the diff
-          </.link>
+          <.checks_line sha={@drift.main} status={@checks} id="main-checks" class="ml-auto" />
         </div>
-        <%!-- Every commit but the tip can be pushed to on its own: GitHub's main moves to it
-             and the ones above stay ahead. The button follows that commit's own checks. --%>
+        <%!-- Each commit has the diff up to it, and every one but the tip can be pushed to on
+             its own: GitHub's main moves to it and the ones above stay ahead. The button follows
+             that commit's own checks. --%>
         <ol class="mt-1 space-y-1 text-sm">
           <li :for={c <- @drift.ahead} class="flex items-start gap-2">
             <span class="shrink-0 font-mono text-xs leading-5 text-(--warn-text)">{c.short}</span>
             <span class="min-w-0 flex-1 text-(--text)">{c.subject}</span>
             <span class="shrink-0 text-xs leading-5 text-(--text-muted)">{ago(c.date)}</span>
+            <.link
+              navigate={~p"/drift/#{c.sha}"}
+              id={"diff-#{c.short}"}
+              title={"The diff up to #{c.short}"}
+              class="shrink-0 rounded bg-(--surface) px-2 py-0.5 text-xs font-medium text-(--text-2) ring-1 ring-(--border) hover:bg-(--surface-2)"
+            >
+              diff
+            </.link>
             <.push_to
               :if={c.sha != @drift.main}
               commit={c}

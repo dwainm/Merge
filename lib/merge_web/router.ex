@@ -20,6 +20,7 @@ defmodule MergeWeb.Router do
     live "/", HomeLive
     live "/mr/*branch", MergeRequestLive
     live "/drift", DriftLive
+    live "/drift/:sha", DriftLive
     live "/checks/:sha", ChecksLive
   end
 

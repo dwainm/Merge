@@ -50,7 +50,8 @@ The commands find the server through `~/.merge/url` (`MERGE_URL` overrides it).
 
 The home page shows where the repo's local `main` stands against `origin/main`
 (`serve --repo PATH`, else the first merge request's repo): one quiet line when
-they match, else the commits on either side, a diff page, and **Push** or **Pull**.
+they match, else the commits on either side, each with the **diff** up to it, and
+**Push** or **Pull**.
 A push is checked by fetching again; a success shows for a few seconds, a failure
 stays until the next push. Every commit ahead but the tip has a **Push** of its
 own: GitHub's main moves to that commit and the ones above stay ahead. Every
