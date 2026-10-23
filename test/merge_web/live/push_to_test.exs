@@ -15,6 +15,8 @@ defmodule MergeWeb.PushToTest do
     on_exit(fn ->
       Application.put_env(:merge, :repo, was)
       Drift.put_current(nil)
+      # A page asks the watcher to refresh; let it finish in this repo before it is removed.
+      if pid = Process.whereis(Merge.Watcher), do: _ = :sys.get_state(pid)
     end)
 
     one = GitRepo.commit!(repo, %{"ONE.md" => "1\n"}, "One")

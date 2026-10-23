@@ -222,9 +222,11 @@ defmodule MergeWeb.HomeLive do
              that commit's own checks. --%>
         <ol class="mt-1 space-y-1 text-sm">
           <li :for={c <- @drift.ahead} class="flex items-start gap-2">
+            <span class="w-14 shrink-0 text-xs leading-5 text-(--text-muted) tabular-nums">
+              {ago(c.date)}
+            </span>
             <span class="shrink-0 font-mono text-xs leading-5 text-(--warn-text)">{c.short}</span>
             <span class="min-w-0 flex-1 text-(--text)">{c.subject}</span>
-            <span class="shrink-0 text-xs leading-5 text-(--text-muted)">{ago(c.date)}</span>
             <.link
               navigate={~p"/drift/#{c.sha}"}
               id={"diff-#{c.short}"}
