@@ -277,13 +277,18 @@ defmodule MergeWeb.MergeRequestComponents do
   attr :busy, :atom, required: true
 
   @doc """
-  Push to here for one of the commits ahead of GitHub: GitHub's main moves to it
-  and the ones above stay ahead. Plain when the commit's checks passed (or there
-  are none), red when they haven't, and the confirmation says so; the page
-  handles `push_to` with the sha.
+  The Push of one of the commits ahead of GitHub: GitHub's main moves to it and
+  the ones above stay ahead; on the tip it is Push All. The confirmation says
+  what goes, and whether the commit's checks passed; the page handles `push_to`
+  with the sha.
   """
   def push_to(assigns) do
-    assigns = assign(assigns, :passed, checks_passed?(assigns.checks))
+    assigns =
+      assign(
+        assigns,
+        :all,
+        match?([%{sha: sha} | _] when sha == assigns.commit.sha, assigns.ahead)
+      )
 
     ~H"""
     <button
@@ -292,49 +297,40 @@ defmodule MergeWeb.MergeRequestComponents do
       phx-value-sha={@commit.sha}
       data-confirm={push_to_confirm(@ahead, @commit, @checks)}
       disabled={@busy != nil}
-      title={"Push main to GitHub only up to #{@commit.short}"}
-      class={[
-        "shrink-0 rounded px-2 py-0.5 text-xs font-medium ring-1 transition-opacity",
-        "disabled:opacity-50",
-        if(@passed,
-          do: "bg-(--surface) text-(--warn-text) ring-(--warn-border) hover:bg-(--warn-bg)",
-          else: "bg-(--surface) text-(--bad-text) ring-(--bad-border) hover:bg-(--bad-bg)"
-        )
-      ]}
+      title={
+        if @all, do: "Push main to GitHub", else: "Push main to GitHub only up to #{@commit.short}"
+      }
+      class="shrink-0 rounded bg-(--btn-bg) px-2 py-0.5 text-xs font-medium text-(--btn-text) hover:opacity-90 disabled:opacity-50"
     >
-      Push
+      {if @all, do: "Push All", else: "Push"}
     </button>
     """
   end
 
-  # Push to here lists what goes and what stays, and what was checked.
+  # The confirmation lists what goes and what stays, and how the commit's checks went.
   def push_to_confirm(ahead, commit, checks) do
     going = Enum.drop_while(ahead, &(&1.sha != commit.sha))
     staying = length(ahead) - length(going)
     lines = Enum.map_join(going, "\n", &"#{&1.short}  #{&1.subject}")
 
     head =
-      "Push #{count(going, "commit")} to GitHub, up to #{commit.short}? This deploys; " <>
-        "#{count(staying, "commit")} above #{if staying == 1, do: "stays", else: "stay"} ahead."
+      if staying == 0,
+        do: "Push #{count(going, "commit")} to GitHub? This deploys.",
+        else:
+          "Push #{count(going, "commit")} to GitHub, up to #{commit.short}? This deploys; " <>
+            "#{count(staying, "commit")} above #{if staying == 1, do: "stays", else: "stay"} ahead."
+
+    anyway = fn why ->
+      "#{commit.short}'s checks #{why}. Push anyway? This deploys code that hasn't passed them.\n\n" <>
+        lines
+    end
 
     case checks do
-      %{ok: true} ->
-        head <> "\n\n" <> lines <> "\n\nChecks passed on #{commit.short}."
-
-      %{ok: false} ->
-        "#{commit.short}'s checks FAILED. Push up to it anyway? This deploys code that hasn't passed them.\n\n" <>
-          lines
-
-      {:running, _} ->
-        "#{commit.short}'s checks are still running. Push up to it anyway? This deploys code that hasn't passed them.\n\n" <>
-          lines
-
-      :off ->
-        head <> "\n\n" <> lines
-
-      _ ->
-        "#{commit.short}'s checks haven't run. Push up to it anyway? This deploys code that hasn't passed them.\n\n" <>
-          lines
+      %{ok: true} -> head <> "\n\n" <> lines <> "\n\nChecks passed on #{commit.short}."
+      :off -> head <> "\n\n" <> lines
+      %{ok: false} -> anyway.("FAILED")
+      {:running, _} -> anyway.("are still running")
+      _ -> anyway.("haven't run")
     end
   end
 

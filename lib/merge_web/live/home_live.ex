@@ -52,19 +52,8 @@ defmodule MergeWeb.HomeLive do
   end
 
   @impl true
-  # Push only what passed the checks; Push anyway is the deliberate way round.
-  def handle_event("push", _params, socket) do
-    if checks_passed?(socket.assigns.checks) do
-      {:noreply, push(socket)}
-    else
-      {:noreply, put_flash(socket, :error, "main's checks haven't passed. Use Push anyway.")}
-    end
-  end
-
-  def handle_event("push_anyway", _params, socket), do: {:noreply, push(socket)}
-
-  # Push to here: only up to one of the commits ahead. Its confirmation said whether
-  # that commit's checks passed.
+  # The Push of one commit ahead: GitHub's main moves to it (Push All on the tip). The
+  # confirmation said whether that commit's checks passed.
   def handle_event("push_to", %{"sha" => sha}, socket), do: {:noreply, push(socket, sha)}
 
   def handle_event("pull", _params, socket) do
@@ -102,7 +91,7 @@ defmodule MergeWeb.HomeLive do
 
   defp show_push(socket, result), do: assign(socket, last_push: result)
 
-  defp push(socket, to \\ "main") do
+  defp push(socket, to) do
     socket |> assign(busy: :push) |> start_async(:push, fn -> Drift.push(Drift.repo(), to) end)
   end
 
@@ -139,37 +128,6 @@ defmodule MergeWeb.HomeLive do
     branches = MapSet.new(open ++ done, & &1.branch)
     assign(socket, open: open, done: done, pills: pills, branches: branches)
   end
-
-  # The confirmation lists what goes out, and what was checked.
-  defp push_confirm(ahead, checks) do
-    lines = Enum.map_join(ahead, "\n", &"#{&1.short}  #{&1.subject}")
-
-    checked =
-      if match?(%{ok: true}, checks),
-        do: "\n\nChecks passed on #{String.slice(checks.sha, 0, 7)}.",
-        else: ""
-
-    "Push #{count(ahead, "commit")} to GitHub? This deploys.\n\n" <> lines <> checked
-  end
-
-  defp push_anyway_confirm(ahead, checks) do
-    why =
-      case checks do
-        %{ok: false} -> "main's checks FAILED."
-        {:running, _} -> "main's checks are still running."
-        _ -> "main's checks haven't run."
-      end
-
-    why <>
-      " Push anyway? This deploys code that hasn't passed them.\n\n" <>
-      Enum.map_join(ahead, "\n", &"#{&1.short}  #{&1.subject}")
-  end
-
-  defp push_label(:push, _checks), do: "Pushing…"
-  defp push_label(_busy, %{ok: true}), do: "Push"
-  defp push_label(_busy, :off), do: "Push"
-  defp push_label(_busy, %{ok: false}), do: "Push (checks failed)"
-  defp push_label(_busy, _checks), do: "Push (waiting for checks)"
 
   @impl true
   def render(assigns) do
@@ -259,8 +217,8 @@ defmodule MergeWeb.HomeLive do
           </h2>
           <.checks_line sha={@drift.main} status={@checks} id="main-checks" class="ml-auto" />
         </div>
-        <%!-- Each commit has the diff up to it, and every one but the tip can be pushed to on
-             its own: GitHub's main moves to it and the ones above stay ahead. The button follows
+        <%!-- Each commit has the diff up to it and its own Push: GitHub's main moves to it
+             and the ones above stay ahead; the tip's is Push All. The confirmation carries
              that commit's own checks. --%>
         <ol class="mt-1 space-y-1 text-sm">
           <li :for={c <- @drift.ahead} class="flex items-start gap-2">
@@ -276,7 +234,6 @@ defmodule MergeWeb.HomeLive do
               diff
             </.link>
             <.push_to
-              :if={c.sha != @drift.main}
               commit={c}
               ahead={@drift.ahead}
               checks={@commit_checks[c.sha]}
@@ -284,27 +241,6 @@ defmodule MergeWeb.HomeLive do
             />
           </li>
         </ol>
-        <div class="mt-3 flex flex-col gap-2 sm:flex-row">
-          <button
-            id="push-button"
-            phx-click="push"
-            data-confirm={push_confirm(@drift.ahead, @checks)}
-            disabled={@busy != nil or not checks_passed?(@checks)}
-            class="w-full rounded-md bg-(--btn-bg) px-4 py-2 text-sm font-medium text-(--btn-text) hover:opacity-90 disabled:opacity-50 sm:w-auto"
-          >
-            {push_label(@busy, @checks)}
-          </button>
-          <button
-            :if={not checks_passed?(@checks)}
-            id="push-anyway-button"
-            phx-click="push_anyway"
-            data-confirm={push_anyway_confirm(@drift.ahead, @checks)}
-            disabled={@busy != nil}
-            class="w-full rounded-md bg-(--surface) px-4 py-2 text-sm font-medium text-(--bad-text) ring-1 ring-(--bad-border) hover:bg-(--bad-bg) disabled:opacity-50 sm:w-auto"
-          >
-            Push anyway
-          </button>
-        </div>
       </div>
 
       <div

@@ -50,11 +50,11 @@ The commands find the server through `~/.merge/url` (`MERGE_URL` overrides it).
 
 The home page shows where the repo's local `main` stands against `origin/main`
 (`serve --repo PATH`, else the first merge request's repo): one quiet line when
-they match, else the commits on either side, each with the **diff** up to it, and
-**Push** or **Pull**.
+they match, else the commits on either side, each with the **diff** up to it and
+its own **Push** (**Push All** on the tip), or **Pull**.
 A push is checked by fetching again; a success shows for a few seconds, a failure
-stays until the next push. Every commit ahead but the tip has a **Push** of its
-own: GitHub's main moves to that commit and the ones above stay ahead. Every
+stays until the next push. A commit's Push moves GitHub's main to that commit
+and the ones above stay ahead. Every
 minute the server fetches, refreshes this, and marks merge requests whose branch
 is on main as "Merged", then "On origin" once origin/main has it. The badges: Review
 (also when sent back for work), Approved, Merged, On origin, Closed.
@@ -70,14 +70,13 @@ time; a tip that's already superseded is skipped. For Day of Plenty:
 
 The home card shows "Checks passed / running / failed on <sha>" (with the failing
 output), `/checks/<sha>` has the whole log, and a merged merge request shows
-"main at <sha>: checks passed". **Push** is enabled only when main's tip passed;
-**Push anyway** pushes regardless, after its own confirmation. A commit's own
-**Push** goes by that commit's checks (each was a tip once, unless it was superseded
-before its turn): plain when they passed, red when not, and its confirmation says
-so. Results are kept per commit on disk.
+"main at <sha>: checks passed". A commit's **Push** (each commit ahead was a tip
+once, unless it was superseded before its turn) says in its confirmation whether
+that commit's checks passed, and asks to push anyway when they haven't. Results
+are kept per commit on disk.
 
 The flow for a coordinator: merge into local main (all at once when there are
-several), wait for "Checks passed" on the tip, then Push from the home page.
+several), wait for "Checks passed" on the tip, then Push All from the home page.
 
 ## Trees and servers
 

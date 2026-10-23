@@ -22,13 +22,13 @@ defmodule MergeWeb.PushToTest do
     %{repo: repo, one: String.slice(one, 0, 7), two: String.slice(two, 0, 7)}
   end
 
-  test "every commit ahead but the tip has Push to here, which leaves the rest ahead",
+  test "every commit ahead has a Push that leaves the ones above ahead, the tip's is Push All",
        %{conn: conn, repo: repo, one: one, two: two} do
     {:ok, view, _html} = live(conn, ~p"/")
 
     assert has_element?(view, "#drift-ahead")
     assert has_element?(view, "#push-to-#{one}", "Push")
-    refute has_element?(view, "#push-to-#{two}")
+    assert has_element?(view, "#push-to-#{two}", "Push All")
 
     view |> element("#push-to-#{one}") |> render_click()
     render_async(view)
@@ -37,6 +37,11 @@ defmodule MergeWeb.PushToTest do
     assert has_element?(view, "#push-result", "main is still 1 commit ahead of GitHub")
     assert %{ahead: [%{short: ^two}], behind: []} = Drift.read(repo)
     refute has_element?(view, "#push-to-#{one}")
+
+    view |> element("#push-to-#{two}") |> render_click()
+    render_async(view)
+    assert has_element?(view, "#push-result", "Local main and origin/main are identical")
+    assert %{ahead: [], behind: []} = Drift.read(repo)
   end
 
   test "each commit links to the diff up to it, which leaves out the ones above", %{
