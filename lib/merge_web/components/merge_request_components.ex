@@ -69,17 +69,67 @@ defmodule MergeWeb.MergeRequestComponents do
   def line_key(path, %{type: :del, old: old}), do: {path, "old", old}
   def line_key(path, %{new: new}), do: {path, "new", new}
 
+  @doc """
+  A group of files (`Merge.Groups`): a slim heading that floats at the top of
+  the viewport above the file headers while the group scrolls, with the
+  author's note, the count and the +/−, folding the whole group. Without
+  `headed` (one group: nothing to tell apart) the files come bare.
+  """
+  attr :group, :map, required: true
+  attr :headed, :boolean, default: true
+  slot :inner_block, required: true
+
+  def diff_group(assigns) do
+    ~H"""
+    <details
+      :if={@headed}
+      id={@group.id}
+      open
+      phx-hook=".FileFold"
+      data-path={"group " <> @group.title}
+      class="group/g scroll-mt-4"
+    >
+      <summary class="sticky top-0 z-20 flex h-9 cursor-pointer list-none items-center gap-2 bg-(--bg) text-xs">
+        <span class="text-(--text-faint) transition group-open/g:rotate-90">▸</span>
+        <span class="font-medium text-(--text)">{@group.title}</span>
+        <span
+          :if={@group.note}
+          class="min-w-0 flex-1 truncate text-(--text-muted)"
+          title={@group.note}
+        >
+          {@group.note}
+        </span>
+        <span class="ml-auto whitespace-nowrap text-(--text-muted)">{count(@group.files, "file")}</span>
+        <span class="font-mono text-(--ok-text)">+{@group.additions}</span>
+        <span class="font-mono text-(--bad-text)">−{@group.deletions}</span>
+      </summary>
+      <div class="space-y-3 pt-1 pb-3">
+        {render_slot(@inner_block)}
+      </div>
+    </details>
+    <div :if={!@headed} class="space-y-3">
+      {render_slot(@inner_block)}
+    </div>
+    """
+  end
+
   attr :file, :map, required: true
   attr :index, :integer, required: true
   attr :line_comments, :map, default: %{}
   attr :picked, :any, default: nil
   attr :commentable, :boolean, default: false
+
+  attr :stacked, :boolean,
+    default: false,
+    doc: "under a group heading, which the header floats below"
+
+  attr :quiet, :boolean, default: false, doc: "starts folded: nobody reads it line by line"
   slot :comment_form
   slot :comment
 
   def diff_file(assigns) do
     lines = Enum.reduce(assigns.file.hunks, 0, &(length(&1.lines) + &2))
-    assigns = assign(assigns, :open, lines <= 600)
+    assigns = assign(assigns, :open, lines <= 600 and not assigns.quiet)
 
     ~H"""
     <details
@@ -87,9 +137,21 @@ defmodule MergeWeb.MergeRequestComponents do
       open={@open}
       phx-hook=".FileFold"
       data-path={@file.path}
-      class="group overflow-hidden rounded-lg border border-(--border) bg-(--surface)"
+      class={[
+        "group rounded-lg border border-(--border) bg-(--surface)",
+        if(@stacked, do: "scroll-mt-13", else: "scroll-mt-4")
+      ]}
     >
-      <summary class="flex cursor-pointer list-none items-center gap-2 border-b border-(--border) bg-(--surface-2) px-3 py-2 text-xs">
+      <%!-- The header floats at the top of the viewport (below the group's
+           heading when there is one) while the file's diff scrolls under it,
+           so a long file can be folded without scrolling back up. It stops
+           floating when the file ends. The card cannot clip its overflow for
+           that to work, so the corners are rounded here and on the diff body
+           instead. --%>
+      <summary class={[
+        "sticky z-10 flex cursor-pointer list-none items-center gap-2 rounded-t-lg border-b border-(--border) bg-(--surface-2) px-3 py-2 text-xs group-[:not([open])]:rounded-b-lg",
+        if(@stacked, do: "top-9", else: "top-0")
+      ]}>
         <span class="text-(--text-faint) transition group-open:rotate-90">▸</span>
         <span class="min-w-0 flex-1 truncate font-mono text-(--text)" title={@file.path}>
           <span :if={@file.status == :renamed} class="text-(--text-faint)">{@file.old_path} → </span>{@file.path}
@@ -110,7 +172,7 @@ defmodule MergeWeb.MergeRequestComponents do
 
       <p :if={@file.binary?} class="px-3 py-2 text-xs text-(--text-muted)">Binary file</p>
 
-      <div :if={@file.hunks != []} class="overflow-x-auto">
+      <div :if={@file.hunks != []} class="overflow-x-auto rounded-b-lg">
         <table class="hl code-diff w-full border-collapse font-mono text-[12px] leading-5">
           <tbody :for={hunk <- @file.hunks}>
             <tr class="diff-hunk">
@@ -177,12 +239,20 @@ defmodule MergeWeb.MergeRequestComponents do
       // choice is kept per page and file path in localStorage, and put back
       // on mount and after each patch (which would otherwise restore the
       // server's default).
+      //
+      // Folding a file from its floating header, deep in a long diff, would
+      // otherwise leave the page somewhere in the file after it; the page
+      // scrolls back to the folded file instead.
       export default {
         mounted() {
           this.key = `merge:fold:${location.pathname}:${this.el.dataset.path}`
           this.restore()
           this.onToggle = () => {
+            if (this.restoring) { this.restoring = false; return }
             try { localStorage.setItem(this.key, this.el.open ? "open" : "closed") } catch (_) {}
+            if (!this.el.open && this.el.getBoundingClientRect().top < 0) {
+              this.el.scrollIntoView({block: "start"})
+            }
           }
           this.el.addEventListener("toggle", this.onToggle)
         },
@@ -191,7 +261,13 @@ defmodule MergeWeb.MergeRequestComponents do
         restore() {
           let kept = null
           try { kept = localStorage.getItem(this.key) } catch (_) {}
-          if (kept !== null) this.el.open = kept === "open"
+          if (kept === null) return
+          const open = kept === "open"
+          if (this.el.open !== open) {
+            // The toggle this fires is not the reader's: nothing to keep or scroll to.
+            this.restoring = true
+            this.el.open = open
+          }
         }
       }
     </script>

@@ -22,6 +22,7 @@ defmodule MergeWeb.ApiController do
       base: params["base"],
       title: params["title"],
       body: params["body"],
+      groups: params["groups"],
       opened_by: params["as"]
     }
 
@@ -61,7 +62,7 @@ defmodule MergeWeb.ApiController do
   end
 
   def addressed(conn, %{"branch" => branch, "commit" => commit} = params) do
-    case MergeRequest.addressed(branch, commit, params["note"], params["as"]) do
+    case MergeRequest.addressed(branch, commit, params["note"], params["as"], params["groups"]) do
       {:ok, entry} -> json(conn, %{addressed: entry, url: MergeWeb.mr_url(branch)})
       {:error, message} -> error(conn, 422, message)
       :error -> not_found(conn, branch)

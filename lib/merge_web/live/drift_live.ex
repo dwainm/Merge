@@ -6,7 +6,7 @@ defmodule MergeWeb.DriftLive do
 
   use MergeWeb, :live_view
 
-  alias Merge.{Drift, Git}
+  alias Merge.{Drift, Git, Groups}
   import MergeWeb.MergeRequestComponents
 
   @impl true
@@ -23,13 +23,16 @@ defmodule MergeWeb.DriftLive do
         _ -> []
       end
 
+    groups = if files == [], do: [], else: Groups.build(repo, files, to, "origin/main")
+
     {:ok,
      assign(socket,
        page_title: "main against GitHub",
        drift: drift,
        to: to,
        in_diff: in_diff(drift, to),
-       files: files
+       files: files,
+       groups: groups
      )}
   end
 
@@ -99,7 +102,15 @@ defmodule MergeWeb.DriftLive do
           >
             No changes: main is on GitHub.
           </p>
-          <.diff_file :for={{file, i} <- Enum.with_index(@files)} file={file} index={i} />
+          <.diff_group :for={group <- @groups} group={group} headed={length(@groups) > 1}>
+            <.diff_file
+              :for={file <- group.files}
+              file={file}
+              index={file.index}
+              stacked={length(@groups) > 1}
+              quiet={Groups.quiet?(file)}
+            />
+          </.diff_group>
         </section>
       </div>
     </Layouts.app>

@@ -19,6 +19,12 @@ defmodule Merge.MCP.OpenMergeRequest do
     field(:base, :string, description: "The branch to review against, for a stacked branch")
     field(:title, :string, description: "A title; the branch name when left out")
     field(:body, :string, description: "What the branch does, for the reviewer")
+
+    field(:groups, :string,
+      description:
+        "How the files group on the page, in reading order: a heading line, the paths under it (a file, a glob like lib/app/stock/*, or a directory like assets/js/), a blank line between groups. Lines after the heading that aren't paths are the group's note. Files not named fall into Merge's own groups for the stack."
+    )
+
     field(:as, :string, description: "Your name, shown to the reviewer")
   end
 
@@ -30,6 +36,7 @@ defmodule Merge.MCP.OpenMergeRequest do
            base: params[:base],
            title: params[:title],
            body: params[:body],
+           groups: params[:groups],
            opened_by: params[:as]
          }) do
       {:ok, mr, how} ->

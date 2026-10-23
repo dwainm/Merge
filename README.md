@@ -13,13 +13,13 @@ No GitHub and no database: each merge request is a process, gone when the server
     merge serve [--port N]
         merge serve                     # prints http://localhost:<PORT> and https://merge.dev.dayofplenty.com
 
-    merge mr open <branch> [--repo PATH] [--base BRANCH] [--title T] [--body B | --body-file F] [--as NAME]
+    merge mr open <branch> [--repo PATH] [--base BRANCH] [--title T] [--body B | --body-file F] [--groups F] [--as NAME]
         cd /root/projects/dayofplenty && merge mr open checkin --title "Coffee shop check-in"
 
     merge mr wait <branch> [--as NAME]
         merge mr wait checkin           # blocks until Approve or Reject, prints it with every comment
 
-    merge mr addressed <branch> <commit> [--note "..."] [--as NAME]
+    merge mr addressed <branch> <commit> [--note "..."] [--groups F] [--as NAME]
         merge mr addressed checkin HEAD --note "Kept hello, added the test"
 
     merge mr reply <branch> <comment-id> "<answer>" [--as NAME]
@@ -45,6 +45,42 @@ No GitHub and no database: each merge request is a process, gone when the server
 after a server restart and carries on from the last line it printed. MCP: `watch_events`.
 
 The commands find the server through `~/.merge/url` (`MERGE_URL` overrides it).
+
+## The files, in reading order
+
+A merge request's files come in groups, in the order someone who knows the stack reads
+them, not git's alphabetical order. Merge reads the stack from the branch: a `mix.exs`
+with Phoenix makes a Phoenix app, a `package.json` with Expo an Expo app, and a repo can
+hold several (`mobile/` under the Phoenix app gets its own groups, named `mobile: Screens`).
+A Phoenix app reads as migrations; resources and schemas; preparations, changes and types;
+jobs; domain; router, controllers and plugs; LiveViews and components; assets; tests; config
+and docs. What a module is comes from what it `use`s, read at the branch tip, so a
+preparation that is really a resource lands with the resources. An Expo app reads as
+screens, components, lib and state, native and assets, tests, config and docs. A repo with
+neither groups by top directory.
+
+Each group has a heading that floats at the top while its files scroll, with the count and
+the +/−, and folds the whole group; a file's header floats below it, so a long file folds
+without scrolling back up. Lockfiles, vendored and minified code, built assets and resource
+snapshots start folded. The right column lists the groups and files to jump to.
+
+**The author can say how the files group**, in reading order, when the change has a story
+the kinds don't tell: a heading, the paths under it (a file, a glob like `lib/dop/stock/*`,
+a directory like `assets/js/`), a blank line between groups. Lines after the heading that
+aren't paths are the group's note. Either as a `groups` block in the body, or a file with
+`--groups` (MCP: the `groups` field):
+
+    The model: a level per item per space
+    lib/dop/stock/level.ex
+    priv/repo/migrations/*
+
+    The pages, and the barcode scanner they share
+    lib/dop_web/live/stock_tab.ex
+    assets/js/barcode_scan.js
+
+The author's groups come first; files not named follow in Merge's own groups, so a file a
+later push adds is never hidden. `mr addressed --groups F` (or a `groups` block in its note)
+replaces the grouping; so does opening the branch again with one.
 
 ## main against GitHub
 
@@ -131,6 +167,9 @@ reloader picks up code changes, but not new libraries).
   `addressed`. A commit's diff is against its first parent. "Since your review" is the diff from
   the head that was reviewed to the current head; commits after it are marked new.
 - **Line comments** are tied to the view they were written on (the whole branch, or one commit).
+- **Groups are Merge's opinion, not configuration.** `Merge.Stack` knows Phoenix and Expo and
+  reads a module's `use` line at the tip to place it; the author's `groups` text overrides it
+  file by file, and anything it doesn't name keeps Merge's order. No per-repo config file.
 - **Syntax colours** come from Makeup; each side of a hunk is lexed as one text so strings and
   heredocs that span lines keep their colour.
 - **MCP** uses `anubis_mcp` over Streamable HTTP at `/mcp`. It runs one request at a time per

@@ -34,14 +34,50 @@ defmodule MergeWeb.MergeRequestLiveTest do
     {:ok, _} = MergeRequest.addressed(c.branch, second)
 
     {:ok, view, _html} = live(conn, MergeWeb.mr_path(c.branch))
-    assert has_element?(view, "#file-0", "README.md")
-    assert has_element?(view, "#file-1", "lib/app.ex")
+    # No stack known: by top directory, the root's files last, each a group.
+    assert has_element?(view, "#group-0 > summary", "lib")
+    assert has_element?(view, "#group-0 #file-0", "lib/app.ex")
+    assert has_element?(view, "#group-1 > summary", "Top level")
+    assert has_element?(view, "#group-1 #file-1", "README.md")
+    assert has_element?(view, "#outline a[href='#file-1']", "README.md")
     assert has_element?(view, "#commits li:first-child", "Add a readme")
 
     view |> element("#commit-#{String.slice(c.first, 0, 7)} a") |> render_click()
     assert has_element?(view, "#selected-commit", "Empty the app")
     assert has_element?(view, "#file-0", "lib/app.ex")
     refute has_element?(view, "#file-1")
+    # One group has nothing to tell apart: no heading, no outline.
+    refute has_element?(view, "#group-0")
+    refute has_element?(view, "#outline")
+  end
+
+  test "the author's groups head the page, from the body or from addressed", %{conn: conn} = c do
+    body = """
+    Empties the app.
+
+    ```groups
+    The app, emptied
+    Nothing is left of it.
+    lib/app.ex
+    ```
+    """
+
+    {:ok, mr, :existing} = MergeRequest.open(%{branch: c.branch, repo: c.repo, body: body})
+    assert mr.groups == "The app, emptied\nNothing is left of it.\nlib/app.ex"
+    # The body keeps the block out of the page's text.
+    assert mr.body == ""
+
+    {:ok, view, _html} = live(conn, MergeWeb.mr_path(c.branch))
+    refute has_element?(view, "#group-0")
+
+    sha = GitRepo.commit!(c.repo, %{"README.md" => "# App\n"}, "Add a readme")
+
+    {:ok, _} =
+      MergeRequest.addressed(c.branch, sha, "Added it", "agent", "The readme\nREADME.md\n")
+
+    assert has_element?(view, "#group-0 > summary", "The readme")
+    assert has_element?(view, "#group-0 #file-0", "README.md")
+    assert has_element?(view, "#group-1 > summary", "lib")
   end
 
   test "comment on a line, reject, and the agent is told", %{conn: conn} = c do

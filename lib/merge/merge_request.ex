@@ -3,7 +3,8 @@ defmodule Merge.MergeRequest do
   One process per merge request, registered by branch. It holds everything
   about the merge request: the branch and base, title, body, who opened it, the
   comments, the decisions, what was addressed, the commits and the current diff,
-  and the agents waiting to hear a decision. Every change is also written to
+  how the author says the files group (`groups`, see `Merge.Groups`), and the
+  agents waiting to hear a decision. Every change is also written to
   disk (`Merge.Store`), and `restore_all/0` brings them back after a restart;
   waiting agents are not kept, their `wait` asks again.
 
@@ -60,6 +61,7 @@ defmodule Merge.MergeRequest do
     :merged,
     :git_dir,
     :merge_check,
+    :groups,
     conflicts: [],
     branch_state: :ok,
     status: :open,
@@ -99,8 +101,9 @@ defmodule Merge.MergeRequest do
 
   @doc """
   Opens a merge request for `attrs.branch` in `attrs.repo`, or, when one is
-  already open for the branch, registers the opener on it. A done one for the
-  branch makes way for the new one. Returns `{:ok, mr, :opened | :existing}`.
+  already open for the branch, registers the opener on it (and takes its
+  `groups`, when it brings some). A done one for the branch makes way for the
+  new one. Returns `{:ok, mr, :opened | :existing}`.
   """
   def open(attrs) do
     attrs = Map.new(attrs)
@@ -108,7 +111,7 @@ defmodule Merge.MergeRequest do
 
     case lookup(branch) do
       {:ok, pid} ->
-        case GenServer.call(pid, {:register, attrs[:opened_by]}) do
+        case GenServer.call(pid, {:register, attrs[:opened_by], groups(attrs)}) do
           :ok -> {:ok, get!(branch), :existing}
           :done -> open(attrs)
         end
@@ -194,9 +197,13 @@ defmodule Merge.MergeRequest do
     call(branch, {:decide, verdict, String.trim(body || ""), by})
   end
 
-  @doc "Records that `commit` addresses the last decision, recomputes the diff and starts a new round."
-  def addressed(branch, commit, note \\ nil, by \\ nil),
-    do: call(branch, {:addressed, commit, note, by})
+  @doc """
+  Records that `commit` addresses the last decision, recomputes the diff and
+  starts a new round. `groups` (or a `groups` block in the note) replaces how
+  the files group.
+  """
+  def addressed(branch, commit, note \\ nil, by \\ nil, groups \\ nil),
+    do: call(branch, {:addressed, commit, note, by, groups})
 
   @doc """
   Waits for news for the agent `name`: a comment or a decision it hasn't been
@@ -265,6 +272,7 @@ defmodule Merge.MergeRequest do
     with {:ok, _} <- Git.rev_parse(repo, base),
          {:ok, _} <- Git.rev_parse(repo, branch) do
       opened_by = blank_to_nil(attrs[:opened_by]) || "agent"
+      {body, groups} = Merge.Body.split_groups(attrs[:body])
 
       state =
         %__MODULE__{
@@ -272,7 +280,8 @@ defmodule Merge.MergeRequest do
           base: base,
           repo: repo,
           title: blank_to_nil(attrs[:title]) || branch,
-          body: attrs[:body] || "",
+          body: body,
+          groups: blank_to_nil(attrs[:groups]) || groups,
           opened_by: opened_by,
           opened_at: DateTime.utc_now(),
           agents: [opened_by],
@@ -302,16 +311,22 @@ defmodule Merge.MergeRequest do
 
   # A done merge request steps aside for a new one on the same branch: it
   # unregisters itself before it stops, so the branch is free at once.
-  def handle_call({:register, _name}, _from, %{status: status} = state)
+  def handle_call({:register, _name, _groups}, _from, %{status: status} = state)
       when status in [:merged, :closed] do
     Registry.unregister(Merge.Registry, state.branch)
     {:stop, :normal, :done, state}
   end
 
-  def handle_call({:register, name}, _from, state) do
+  def handle_call({:register, name, groups}, _from, state) do
     state = register(state, name)
-    Merge.Store.put(saved(state))
-    {:reply, :ok, state}
+
+    if groups,
+      do: {:reply, :ok, changed(%{state | groups: groups})},
+      else:
+        (
+          Merge.Store.put(saved(state))
+          {:reply, :ok, state}
+        )
   end
 
   def handle_call({:wait, name, _timeout}, _from, %{status: status} = state)
@@ -516,9 +531,11 @@ defmodule Merge.MergeRequest do
     end
   end
 
-  def handle_call({:addressed, commit, note, by}, _from, state) do
+  def handle_call({:addressed, commit, note, by, groups}, _from, state) do
     repo = git_repo(state)
     before = state
+    {note, note_groups} = Merge.Body.split_groups(note)
+    groups = blank_to_nil(groups) || note_groups || state.groups
 
     with {:ok, sha} <- Git.rev_parse(repo, commit),
          true <- Git.on_branch?(repo, sha, state.branch) || {:error, :not_on_branch} do
@@ -533,7 +550,7 @@ defmodule Merge.MergeRequest do
       }
 
       state =
-        %{state | addressed: state.addressed ++ [entry], status: :open}
+        %{state | addressed: state.addressed ++ [entry], status: :open, groups: groups}
         |> refresh()
         |> Map.put(:branch_state, :ok)
         |> merge_check()
@@ -912,6 +929,11 @@ defmodule Merge.MergeRequest do
   defp public(state) do
     waiting = state.waiters |> Map.values() |> Enum.map(&elem(&1, 2)) |> Enum.uniq()
     state |> Map.from_struct() |> Map.delete(:waiters) |> Map.put(:waiting, waiting)
+  end
+
+  # The groups an open brings: `attrs.groups`, else a `groups` block in the body.
+  defp groups(attrs) do
+    blank_to_nil(attrs[:groups]) || elem(Merge.Body.split_groups(attrs[:body]), 1)
   end
 
   defp blank_to_nil(nil), do: nil

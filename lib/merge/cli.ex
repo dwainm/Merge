@@ -10,9 +10,9 @@ defmodule Merge.CLI do
 
   @usage """
   merge serve [--port N] [--repo PATH] [--check CMD]
-  merge mr open <branch> [--repo PATH] [--base BRANCH] [--title T] [--body B | --body-file F] [--as NAME]
+  merge mr open <branch> [--repo PATH] [--base BRANCH] [--title T] [--body B | --body-file F] [--groups F] [--as NAME]
   merge mr wait <branch> [--as NAME]      returns on each comment or decision; run it again to keep listening
-  merge mr addressed <branch> <commit> [--note "..."] [--as NAME]
+  merge mr addressed <branch> <commit> [--note "..."] [--groups F] [--as NAME]
   merge mr reply <branch> <comment-id> "<answer>" [--as NAME]   shown under the comment
   merge mr merged <branch> [--commit SHA]  marks it merged (found on main when no --commit)
   merge mr close <branch>
@@ -27,6 +27,7 @@ defmodule Merge.CLI do
     title: :string,
     body: :string,
     body_file: :string,
+    groups: :string,
     as: :string,
     note: :string,
     port: :integer,
@@ -53,6 +54,7 @@ defmodule Merge.CLI do
 
   defp command(["mr", "open", branch], opts) do
     with {:ok, body} <- body(opts),
+         {:ok, groups} <- groups(opts),
          {:ok, %{"merge_request" => mr, "result" => result}} <-
            post("/api/open", %{
              branch: branch,
@@ -60,6 +62,7 @@ defmodule Merge.CLI do
              base: opts[:base],
              title: opts[:title],
              body: body,
+             groups: groups,
              as: agent(opts)
            }) do
       verb = if result == "existing", do: "Already open", else: "Opened"
@@ -75,11 +78,13 @@ defmodule Merge.CLI do
   defp command(["mr", "wait", branch], opts), do: wait(branch, agent(opts))
 
   defp command(["mr", "addressed", branch, commit], opts) do
-    with {:ok, %{"addressed" => a, "url" => url}} <-
+    with {:ok, groups} <- groups(opts),
+         {:ok, %{"addressed" => a, "url" => url}} <-
            post("/api/addressed", %{
              branch: branch,
              commit: commit,
              note: opts[:note],
+             groups: groups,
              as: agent(opts)
            }) do
       IO.puts("Addressed in #{a["short"]}. Ready for review again: #{url}")
@@ -270,16 +275,16 @@ defmodule Merge.CLI do
     end
   end
 
-  defp body(opts) do
-    case opts[:body_file] do
-      nil ->
-        {:ok, opts[:body]}
+  defp body(opts), do: read(opts[:body_file], opts[:body])
 
-      file ->
-        case File.read(Path.expand(file, cwd())) do
-          {:ok, body} -> {:ok, body}
-          {:error, reason} -> {:error, "Can't read #{file}: #{:file.format_error(reason)}"}
-        end
+  defp groups(opts), do: read(opts[:groups], nil)
+
+  defp read(nil, default), do: {:ok, default}
+
+  defp read(file, _default) do
+    case File.read(Path.expand(file, cwd())) do
+      {:ok, text} -> {:ok, text}
+      {:error, reason} -> {:error, "Can't read #{file}: #{:file.format_error(reason)}"}
     end
   end
 

@@ -59,6 +59,48 @@ defmodule Merge.Git do
     end
   end
 
+  @doc "Every path in the tree at `ref`."
+  def ls_tree(repo, ref) do
+    with {:ok, out} <- git(repo, ["ls-tree", "-r", "--name-only", ref]) do
+      {:ok, String.split(out, "\n", trim: true)}
+    end
+  end
+
+  @doc """
+  The contents of `paths` at `ref`, as `%{path => content}`, in one git call
+  (`cat-file --batch`). A path that isn't there at `ref` is left out.
+  """
+  def cat(_repo, _ref, []), do: %{}
+
+  def cat(repo, ref, paths) do
+    list = Path.join(System.tmp_dir!(), "merge-cat-#{System.unique_integer([:positive])}")
+    File.write!(list, Enum.map_join(paths, "", &"#{ref}:#{&1}\n"))
+
+    try do
+      case System.cmd("sh", ["-c", ~s(exec git -C "$1" cat-file --batch < "$2"), "sh", repo, list]) do
+        {out, 0} -> batch(out, paths, %{})
+        _ -> %{}
+      end
+    after
+      File.rm(list)
+    end
+  end
+
+  # Each answer is `<sha> <type> <size>\n<content>\n`, or `<spec> missing\n`.
+  defp batch(_out, [], acc), do: acc
+
+  defp batch(out, [path | paths], acc) do
+    with [header, rest] <- String.split(out, "\n", parts: 2),
+         [_sha, _type, size] <- String.split(header, " ") do
+      size = String.to_integer(size)
+      <<content::binary-size(^size), "\n", rest::binary>> = rest
+      batch(rest, paths, Map.put(acc, path, content))
+    else
+      [_header, rest] -> batch(rest, paths, acc)
+      _ -> acc
+    end
+  end
+
   @doc "The repo's shared git directory (a worktree's main repo), as an absolute path."
   def common_dir(repo) do
     case git(repo, ["rev-parse", "--git-common-dir"]) do

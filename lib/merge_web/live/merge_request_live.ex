@@ -8,7 +8,7 @@ defmodule MergeWeb.MergeRequestLive do
 
   use MergeWeb, :live_view
 
-  alias Merge.{Checks, Drift, Git, MergeRequest, Servers}
+  alias Merge.{Checks, Drift, Git, Groups, MergeRequest, Servers}
   import MergeWeb.MergeRequestComponents
 
   # The queue's tabs. A tab dropping out never moves this page.
@@ -40,7 +40,7 @@ defmodule MergeWeb.MergeRequestLive do
   @impl true
   def handle_params(params, _uri, %{assigns: %{mr: nil}} = socket) do
     _ = params
-    {:noreply, assign(socket, view: :branch, files: [], diff_error: nil)}
+    {:noreply, assign(socket, view: :branch, files: [], groups: [], diff_error: nil)}
   end
 
   def handle_params(params, _uri, socket) do
@@ -159,10 +159,23 @@ defmodule MergeWeb.MergeRequestLive do
       end
 
     case result do
-      {:ok, files} -> assign(socket, files: files, diff_error: nil)
-      {:error, message} -> assign(socket, files: [], diff_error: message)
+      {:ok, files} -> assign(socket, files: files, groups: groups(socket, files), diff_error: nil)
+      {:error, message} -> assign(socket, files: [], groups: [], diff_error: message)
     end
     |> assign_derived()
+  end
+
+  # The files in groups: the author's, then the stack's, read at the view's tip
+  # (and, for a deleted file, at the commit before it).
+  defp groups(%{assigns: %{mr: mr, view: view}}, files) do
+    {tip, before} =
+      case view do
+        :branch -> {mr.head, mr.merge_base || mr.base}
+        {:commit, sha} -> {sha, sha <> "^"}
+        :since -> {mr.head, last_decision(mr).head}
+      end
+
+    Groups.build(MergeRequest.git_repo(mr), files, tip, before, Map.get(mr, :groups))
   end
 
   defp assign_derived(%{assigns: %{mr: mr}} = socket) do
@@ -527,12 +540,55 @@ defmodule MergeWeb.MergeRequestLive do
       <div class="flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,1fr)_18rem] lg:items-start lg:gap-5">
         <aside
           id="commits-panel"
-          class="overflow-hidden rounded-lg border border-(--border) bg-(--surface) lg:sticky lg:top-4 lg:order-last"
+          class="overflow-hidden rounded-lg border border-(--border) bg-(--surface) lg:sticky lg:top-4 lg:order-last lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto"
         >
+          <details :if={length(@groups) > 1} id="outline" class="border-b border-(--border)">
+            <summary class="flex cursor-pointer list-none items-center justify-between bg-(--surface-2) px-3 py-2 text-xs font-medium text-(--text-2)">
+              <span>{count(@files, "file")} in {count(@groups, "group")}</span>
+              <span class="text-(--text-faint)">▾</span>
+            </summary>
+            <ol id="outline-groups" phx-hook=".Outline" class="divide-y divide-(--border) text-xs">
+              <li :for={group <- @groups} class="px-3 py-1.5">
+                <a href={"#" <> group.id} class="flex items-center gap-2 text-(--text)">
+                  <span class="min-w-0 flex-1 truncate font-medium">{group.title}</span>
+                  <span class="text-(--text-faint)">{length(group.files)}</span>
+                </a>
+                <ol class="mt-0.5">
+                  <li :for={{label, file} <- Groups.labels(group.files)}>
+                    <a
+                      href={"#file-#{file.index}"}
+                      title={file.path}
+                      class="block truncate font-mono text-(--text-muted) hover:text-(--text)"
+                    >
+                      {label}
+                    </a>
+                  </li>
+                </ol>
+              </li>
+            </ol>
+            <script :type={Phoenix.LiveView.ColocatedHook} name=".Outline">
+              // A file in the outline opens the group and the file it points at
+              // before scrolling there: a folded one has nothing to scroll to.
+              export default {
+                mounted() {
+                  this.el.addEventListener("click", e => {
+                    const link = e.target.closest("a[href^='#']")
+                    const target = link && document.getElementById(link.getAttribute("href").slice(1))
+                    if (!target) return
+                    e.preventDefault()
+                    for (let el = target; el; el = el.parentElement) {
+                      if (el.tagName === "DETAILS") el.open = true
+                    }
+                    target.scrollIntoView({block: "start"})
+                  })
+                }
+              }
+            </script>
+          </details>
           <div class="flex items-center justify-between border-b border-(--border) bg-(--surface-2) px-3 py-2 text-xs font-medium text-(--text-2)">
             <span>{count(@mr.commits, "commit")}, newest first</span>
           </div>
-          <div class="max-h-56 overflow-y-auto lg:max-h-[calc(100vh-8rem)]">
+          <div class="max-h-56 overflow-y-auto lg:max-h-none">
             <.commit_list
               commits={@mr.commits}
               branch={@mr.branch}
@@ -591,51 +647,55 @@ defmodule MergeWeb.MergeRequestLive do
             No changes.
           </p>
 
-          <.diff_file
-            :for={{file, i} <- Enum.with_index(@files)}
-            file={file}
-            index={i}
-            line_comments={@line_comments}
-            picked={@picked}
-            commentable={not MergeRequest.done?(@mr)}
-          >
-            <:comment :let={comment}>
-              <.comment
-                comment={comment}
-                addressed={addressed_for(@mr, comment)}
-                seen_by={if !reply?(comment), do: MergeRequest.seen_by(@mr, comment), else: []}
-              />
-            </:comment>
-            <:comment_form>
-              <.form
-                for={@line_form}
-                id="line-comment-form"
-                phx-submit="line_comment"
-                class="space-y-2"
-              >
-                <textarea
-                  name={@line_form[:body].name}
-                  id="line-comment-body"
-                  rows="3"
-                  phx-mounted={JS.focus()}
-                  placeholder="Comment on this line"
-                  class="w-full rounded-md border border-(--border) bg-(--surface) px-2 py-1.5 text-base focus:border-(--link) sm:text-sm focus:outline-none"
-                >{@line_form[:body].value}</textarea>
-                <div class="flex gap-2">
-                  <button class="rounded-md bg-(--btn-bg) px-3 py-1.5 text-sm text-(--btn-text) hover:opacity-90">
-                    Comment
-                  </button>
-                  <button
-                    type="button"
-                    phx-click="unpick"
-                    class="rounded-md px-3 py-1.5 text-sm text-(--text-2) hover:bg-(--surface-2)"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </.form>
-            </:comment_form>
-          </.diff_file>
+          <.diff_group :for={group <- @groups} group={group} headed={length(@groups) > 1}>
+            <.diff_file
+              :for={file <- group.files}
+              file={file}
+              index={file.index}
+              stacked={length(@groups) > 1}
+              quiet={Groups.quiet?(file)}
+              line_comments={@line_comments}
+              picked={@picked}
+              commentable={not MergeRequest.done?(@mr)}
+            >
+              <:comment :let={comment}>
+                <.comment
+                  comment={comment}
+                  addressed={addressed_for(@mr, comment)}
+                  seen_by={if !reply?(comment), do: MergeRequest.seen_by(@mr, comment), else: []}
+                />
+              </:comment>
+              <:comment_form>
+                <.form
+                  for={@line_form}
+                  id="line-comment-form"
+                  phx-submit="line_comment"
+                  class="space-y-2"
+                >
+                  <textarea
+                    name={@line_form[:body].name}
+                    id="line-comment-body"
+                    rows="3"
+                    phx-mounted={JS.focus()}
+                    placeholder="Comment on this line"
+                    class="w-full rounded-md border border-(--border) bg-(--surface) px-2 py-1.5 text-base focus:border-(--link) sm:text-sm focus:outline-none"
+                  >{@line_form[:body].value}</textarea>
+                  <div class="flex gap-2">
+                    <button class="rounded-md bg-(--btn-bg) px-3 py-1.5 text-sm text-(--btn-text) hover:opacity-90">
+                      Comment
+                    </button>
+                    <button
+                      type="button"
+                      phx-click="unpick"
+                      class="rounded-md px-3 py-1.5 text-sm text-(--text-2) hover:bg-(--surface-2)"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </.form>
+              </:comment_form>
+            </.diff_file>
+          </.diff_group>
         </section>
       </div>
 

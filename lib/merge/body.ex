@@ -3,7 +3,22 @@ defmodule Merge.Body do
   A merge request's body: Markdown, with any `.png` path under `/tmp` it names
   (the streams' screenshots) shown inline as an image served by `/shot`.
   Raw HTML in the body is dropped, not rendered.
+
+  A fenced block tagged `groups` says how the files group on the page (see
+  `Merge.Groups`); `split_groups/1` takes it out of the body.
   """
+
+  @groups ~r/```groups[ \t]*\n(.*?)\n?```[ \t]*\n?/s
+
+  @doc "The body without its `groups` block, and the block's text (nil without one)."
+  def split_groups(nil), do: {"", nil}
+
+  def split_groups(body) do
+    case Regex.run(@groups, body) do
+      [whole, text] -> {body |> String.replace(whole, "", global: false) |> String.trim(), text}
+      nil -> {body, nil}
+    end
+  end
 
   # A Markdown link or image to a /tmp png, or a bare path (in backticks or not).
   @image ~r{!?\[([^\]]*)\]\((/tmp/[^)\s]+\.png)\)|`?(/tmp/[^\s`'"()<>\[\]]+\.png)`?}

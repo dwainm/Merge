@@ -58,6 +58,17 @@ defmodule Merge.GitTest do
     assert %{path: "lib/app.ex", status: :deleted, deletions: 3} = deleted
   end
 
+  test "the tree at a ref, and the contents of many paths in one call", %{repo: repo} do
+    {:ok, tree} = Git.ls_tree(repo, "main")
+    assert "lib/app.ex" in tree
+
+    assert %{"lib/app.ex" => "defmodule App do" <> _} =
+             contents = Git.cat(repo, "main", ["lib/app.ex", "lib/missing.ex", "lib/app.ex"])
+
+    refute Map.has_key?(contents, "lib/missing.ex")
+    assert Git.cat(repo, "main", []) == %{}
+  end
+
   test "a ref that isn't there", %{repo: repo} do
     assert {:error, message} = Git.rev_parse(repo, "nope")
     assert message =~ "nope"
