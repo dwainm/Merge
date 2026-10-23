@@ -156,8 +156,15 @@ defmodule Merge.Git do
     end
   end
 
-  @doc "Pushes local `branch` to origin. Answers git's output either way."
-  def push(repo, branch), do: git(repo, ["push", "origin", branch])
+  @doc """
+  Pushes local `branch` to origin, or only up to `commit` of it (origin's
+  `branch` moves to that commit). Answers git's output either way.
+  """
+  def push(repo, branch, commit \\ nil)
+  def push(repo, branch, nil), do: git(repo, ["push", "origin", branch])
+
+  def push(repo, branch, commit),
+    do: git(repo, ["push", "origin", "#{commit}:refs/heads/#{branch}"])
 
   @doc """
   Moves local `branch` to origin's, fast-forward only: in the worktree that has

@@ -4,8 +4,8 @@ defmodule Merge.Drift do
   each has that the other hasn't. The repo is `merge serve --repo`, else the
   first merge request's. `Merge.Watcher` fetches and broadcasts it on
   `topic/0` as `{:drift, drift}`, with main's latest CI runs from `gh`;
-  `push/0` and `pull/0` close the gap. A push is judged by fetching again
-  afterwards, not by git's exit code. A failure stays on the home page until
+  `push/0` and `pull/0` close the gap, `push/2` with a commit closes part of
+  it. A push is judged by fetching again afterwards, not by git's exit code. A failure stays on the home page until
   the next push; a success shows for a few seconds.
   """
 
@@ -45,24 +45,35 @@ defmodule Merge.Drift do
   def put_current(drift), do: :persistent_term.put({__MODULE__, :current}, drift)
 
   @doc """
-  Pushes main to GitHub, fetches, and answers what GitHub has now:
-  `%{ok, commits, origin, identical, output, github, at}`. `commits` are the
-  ones that were ahead; `ok` when GitHub has every one of them. Kept as the
-  last push.
+  Pushes main to GitHub, or only up to `to` (a sha among the commits ahead:
+  GitHub's main moves to it, the rest stays ahead), fetches, and answers what
+  GitHub has now: `%{ok, commits, to, origin, identical, left, output, github,
+  at}`. `commits` are the ones that were to go; `ok` when GitHub has every one
+  of them; `left` the commits still ahead afterwards. Kept as the last push.
   """
-  def push(repo \\ repo()) do
+  def push(repo \\ repo(), to \\ "main") do
     before = read(repo)
-    {_, output} = Git.push(repo, "main")
+    ahead = (before && before.ahead) || []
+    commits = if to == "main", do: ahead, else: Enum.drop_while(ahead, &(&1.sha != to))
+
+    {_, output} =
+      cond do
+        commits == [] and to != "main" -> {:error, "#{Events.short(to)} is not ahead of GitHub."}
+        to == "main" -> Git.push(repo, "main")
+        true -> Git.push(repo, "main", to)
+      end
+
     Git.fetch(repo)
     now = read(repo)
-    ahead = (before && before.ahead) || []
-    landed = Enum.filter(ahead, &Git.ancestor?(repo, &1.sha, "origin/main"))
+    landed = Enum.filter(commits, &Git.ancestor?(repo, &1.sha, "origin/main"))
 
     result = %{
-      ok: ahead != [] and length(landed) == length(ahead),
-      commits: ahead,
+      ok: commits != [] and length(landed) == length(commits),
+      commits: commits,
+      to: to,
       origin: now && now.origin,
       identical: now != nil and now.main == now.origin,
+      left: (now && now.ahead) || [],
       output: String.trim(output),
       github: github(repo),
       at: DateTime.utc_now()
@@ -75,7 +86,7 @@ defmodule Merge.Drift do
         Events.emit(
           "pushed",
           "main",
-          "#{length(ahead)} commits, origin at #{Events.short(result.origin)}"
+          "#{length(commits)} commits, origin at #{Events.short(result.origin)}"
         ),
       else: Events.emit("push-failed", "main", result.output)
 

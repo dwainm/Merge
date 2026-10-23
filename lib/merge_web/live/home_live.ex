@@ -63,6 +63,22 @@ defmodule MergeWeb.HomeLive do
 
   def handle_event("push_anyway", _params, socket), do: {:noreply, push(socket)}
 
+  # Push to here: only up to one of the commits ahead, gated on that commit's own checks.
+  def handle_event("push_to", %{"sha" => sha}, socket) do
+    if checks_passed?(socket.assigns.commit_checks[sha]) do
+      {:noreply, push(socket, sha)}
+    else
+      {:noreply,
+       put_flash(
+         socket,
+         :error,
+         "#{String.slice(sha, 0, 7)}'s checks haven't passed. Use Push to here anyway."
+       )}
+    end
+  end
+
+  def handle_event("push_to_anyway", %{"sha" => sha}, socket), do: {:noreply, push(socket, sha)}
+
   def handle_event("pull", _params, socket) do
     {:noreply, socket |> assign(busy: :pull) |> start_async(:pull, fn -> Drift.pull() end)}
   end
@@ -98,22 +114,29 @@ defmodule MergeWeb.HomeLive do
 
   defp show_push(socket, result), do: assign(socket, last_push: result)
 
-  defp push(socket) do
-    socket |> assign(busy: :push) |> start_async(:push, fn -> Drift.push() end)
+  defp push(socket, to \\ "main") do
+    socket |> assign(busy: :push) |> start_async(:push, fn -> Drift.push(Drift.repo(), to) end)
   end
 
-  # The checks of main's tip: :off without a check command, else Checks.status/1.
+  # The checks of main's tip, and of each commit ahead of GitHub (every one was a tip
+  # once, unless superseded before its turn): :off without a check command, else
+  # Checks.status/1.
   defp load_checks(socket) do
-    checks =
-      with %{main: main} <- socket.assigns.drift,
-           pid when is_pid(pid) <- Process.whereis(Checks),
-           true <- Checks.enabled?() do
-        Checks.status(main)
-      else
-        _ -> :off
-      end
+    on? =
+      match?(pid when is_pid(pid), Process.whereis(Checks)) and Checks.enabled?()
 
-    assign(socket, checks: checks)
+    status = fn sha -> if on?, do: Checks.status(sha), else: :off end
+
+    case socket.assigns.drift do
+      %{main: main, ahead: ahead} ->
+        assign(socket,
+          checks: status.(main),
+          commit_checks: Map.new(ahead, &{&1.sha, status.(&1.sha)})
+        )
+
+      _ ->
+        assign(socket, checks: :off, commit_checks: %{})
+    end
   end
 
   # The even box: the colour of main's checks, plain when they are off or haven't run.
@@ -158,6 +181,37 @@ defmodule MergeWeb.HomeLive do
       Enum.map_join(ahead, "\n", &"#{&1.short}  #{&1.subject}")
   end
 
+  # Push to here lists what goes and what stays, and what was checked.
+  defp push_to_confirm(ahead, commit, checks) do
+    going = Enum.drop_while(ahead, &(&1.sha != commit.sha))
+    staying = length(ahead) - length(going)
+    lines = Enum.map_join(going, "\n", &"#{&1.short}  #{&1.subject}")
+
+    head =
+      "Push #{count(going, "commit")} to GitHub, up to #{commit.short}? This deploys; " <>
+        "#{count(staying, "commit")} above #{if staying == 1, do: "stays", else: "stay"} ahead."
+
+    case checks do
+      %{ok: true} ->
+        head <> "\n\n" <> lines <> "\n\nChecks passed on #{commit.short}."
+
+      %{ok: false} ->
+        "#{commit.short}'s checks FAILED. Push up to it anyway? This deploys code that hasn't passed them.\n\n" <>
+          lines
+
+      {:running, _} ->
+        "#{commit.short}'s checks are still running. Push up to it anyway? This deploys code that hasn't passed them.\n\n" <>
+          lines
+
+      :off ->
+        head <> "\n\n" <> lines
+
+      _ ->
+        "#{commit.short}'s checks haven't run. Push up to it anyway? This deploys code that hasn't passed them.\n\n" <>
+          lines
+    end
+  end
+
   defp push_label(:push, _checks), do: "Pushing…"
   defp push_label(_busy, %{ok: true}), do: "Push"
   defp push_label(_busy, :off), do: "Push"
@@ -168,7 +222,14 @@ defmodule MergeWeb.HomeLive do
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash} queue={@queue}>
-      <.drift :if={@drift} drift={@drift} busy={@busy} last_push={@last_push} checks={@checks} />
+      <.drift
+        :if={@drift}
+        drift={@drift}
+        busy={@busy}
+        last_push={@last_push}
+        checks={@checks}
+        commit_checks={@commit_checks}
+      />
 
       <h1 class="mb-4 text-lg font-semibold">Merge requests</h1>
 
@@ -202,6 +263,7 @@ defmodule MergeWeb.HomeLive do
 
   attr :drift, :map, required: true
   attr :checks, :any, default: :off
+  attr :commit_checks, :map, default: %{}, doc: "the checks of each commit ahead, by sha"
   attr :busy, :atom, default: nil
   attr :last_push, :map, default: nil
 
@@ -247,11 +309,20 @@ defmodule MergeWeb.HomeLive do
             See the diff
           </.link>
         </div>
+        <%!-- Every commit but the tip can be pushed to on its own: GitHub's main moves to it
+             and the ones above stay ahead. The button follows that commit's own checks. --%>
         <ol class="mt-1 space-y-1 text-sm">
-          <li :for={c <- @drift.ahead} class="flex gap-2">
+          <li :for={c <- @drift.ahead} class="group flex items-start gap-2">
             <span class="shrink-0 font-mono text-xs leading-5 text-(--warn-text)">{c.short}</span>
             <span class="min-w-0 flex-1 text-(--text)">{c.subject}</span>
             <span class="shrink-0 text-xs leading-5 text-(--text-muted)">{ago(c.date)}</span>
+            <.push_to
+              :if={c.sha != @drift.main}
+              commit={c}
+              ahead={@drift.ahead}
+              checks={@commit_checks[c.sha]}
+              busy={@busy}
+            />
           </li>
         </ol>
         <div class="mt-3 flex flex-col gap-2 sm:flex-row">
@@ -317,6 +388,38 @@ defmodule MergeWeb.HomeLive do
     """
   end
 
+  attr :commit, :map, required: true
+  attr :ahead, :list, required: true
+  attr :checks, :any, required: true
+  attr :busy, :atom, required: true
+
+  # Quiet until the row is hovered; plain when the commit's checks passed (or there are
+  # none), red "anyway" when they haven't.
+  defp push_to(assigns) do
+    assigns = assign(assigns, :passed, checks_passed?(assigns.checks))
+
+    ~H"""
+    <button
+      id={"push-to-#{@commit.short}"}
+      phx-click={if @passed, do: "push_to", else: "push_to_anyway"}
+      phx-value-sha={@commit.sha}
+      data-confirm={push_to_confirm(@ahead, @commit, @checks)}
+      disabled={@busy != nil}
+      title={"Push main to GitHub only up to #{@commit.short}"}
+      class={[
+        "shrink-0 rounded px-2 py-0.5 text-xs font-medium ring-1 transition-opacity",
+        "sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100 disabled:opacity-50",
+        if(@passed,
+          do: "bg-(--surface) text-(--warn-text) ring-(--warn-border) hover:bg-(--warn-bg)",
+          else: "bg-(--surface) text-(--bad-text) ring-(--bad-border) hover:bg-(--bad-bg)"
+        )
+      ]}
+    >
+      {if @passed, do: "Push to here", else: "Push to here anyway"}
+    </button>
+    """
+  end
+
   # gh gives a running run's conclusion as "", so its status says more.
   defp run_state(%{"conclusion" => c}) when c not in [nil, ""], do: c
   defp run_state(%{"status" => status}), do: String.replace(status, "_", " ")
@@ -362,9 +465,16 @@ defmodule MergeWeb.HomeLive do
         </li>
       </ol>
       <p :if={@result.ok} class="mt-2 text-xs">
-        {if @result.identical,
-          do: "Local main and origin/main are identical.",
-          else: "Local main and origin/main differ again since."}
+        {cond do
+          @result.identical ->
+            "Local main and origin/main are identical."
+
+          @result[:left] not in [nil, []] ->
+            "main is still #{count(@result.left, "commit")} ahead of GitHub."
+
+          true ->
+            "Local main and origin/main differ again since."
+        end}
       </p>
       <p class="mt-1 text-xs opacity-70">{ago(@result.at)}</p>
     </div>

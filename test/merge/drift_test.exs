@@ -19,6 +19,24 @@ defmodule Merge.DriftTest do
     assert %{ahead: [], behind: []} = Drift.read(repo)
   end
 
+  test "a push up to one of the commits ahead leaves the rest ahead", %{repo: repo} do
+    one = GitRepo.commit!(repo, %{"ONE.md" => "1\n"}, "One")
+    two = GitRepo.commit!(repo, %{"TWO.md" => "2\n"}, "Two")
+    three = GitRepo.commit!(repo, %{"THREE.md" => "3\n"}, "Three")
+
+    assert %{ok: true, commits: [%{sha: ^two}, %{sha: ^one}], origin: ^two, identical: false} =
+             result = Drift.push(repo, two)
+
+    assert [%{sha: ^three}] = result.left
+    assert %{ahead: [%{sha: ^three}], behind: [], origin: ^two} = Drift.read(repo)
+
+    assert %{ok: false, output: "bad0000 is not ahead of GitHub.", commits: []} =
+             Drift.push(repo, "bad0000bad0000")
+
+    assert %{ok: true, left: [], identical: true} = Drift.push(repo, three)
+    assert %{ahead: [], behind: []} = Drift.read(repo)
+  end
+
   test "a rejected push says so and changes nothing", %{repo: repo, origin: origin} do
     # GitHub moves on without us: our main and theirs diverge.
     other = Path.join(Path.dirname(origin), "other")
