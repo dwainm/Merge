@@ -27,7 +27,7 @@ defmodule MergeWeb.PushToTest do
     {:ok, view, _html} = live(conn, ~p"/")
 
     assert has_element?(view, "#drift-ahead")
-    assert has_element?(view, "#push-to-#{one}", "Push to here")
+    assert has_element?(view, "#push-to-#{one}", "Push")
     refute has_element?(view, "#push-to-#{two}")
 
     view |> element("#push-to-#{one}") |> render_click()

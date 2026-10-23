@@ -271,6 +271,78 @@ defmodule MergeWeb.MergeRequestComponents do
 
   defp host(url), do: url |> String.replace(~r{^https?://}, "") |> String.trim_trailing("/")
 
+  attr :commit, :map, required: true
+  attr :ahead, :list, required: true
+  attr :checks, :any, required: true
+  attr :busy, :atom, required: true
+
+  @doc """
+  Push to here for one of the commits ahead of GitHub: GitHub's main moves to it
+  and the ones above stay ahead. Plain when the commit's checks passed (or there
+  are none), red when they haven't, and the confirmation says so; the page
+  handles `push_to` with the sha.
+  """
+  def push_to(assigns) do
+    assigns = assign(assigns, :passed, checks_passed?(assigns.checks))
+
+    ~H"""
+    <button
+      id={"push-to-#{@commit.short}"}
+      phx-click="push_to"
+      phx-value-sha={@commit.sha}
+      data-confirm={push_to_confirm(@ahead, @commit, @checks)}
+      disabled={@busy != nil}
+      title={"Push main to GitHub only up to #{@commit.short}"}
+      class={[
+        "shrink-0 rounded px-2 py-0.5 text-xs font-medium ring-1 transition-opacity",
+        "disabled:opacity-50",
+        if(@passed,
+          do: "bg-(--surface) text-(--warn-text) ring-(--warn-border) hover:bg-(--warn-bg)",
+          else: "bg-(--surface) text-(--bad-text) ring-(--bad-border) hover:bg-(--bad-bg)"
+        )
+      ]}
+    >
+      Push
+    </button>
+    """
+  end
+
+  # Push to here lists what goes and what stays, and what was checked.
+  def push_to_confirm(ahead, commit, checks) do
+    going = Enum.drop_while(ahead, &(&1.sha != commit.sha))
+    staying = length(ahead) - length(going)
+    lines = Enum.map_join(going, "\n", &"#{&1.short}  #{&1.subject}")
+
+    head =
+      "Push #{count(going, "commit")} to GitHub, up to #{commit.short}? This deploys; " <>
+        "#{count(staying, "commit")} above #{if staying == 1, do: "stays", else: "stay"} ahead."
+
+    case checks do
+      %{ok: true} ->
+        head <> "\n\n" <> lines <> "\n\nChecks passed on #{commit.short}."
+
+      %{ok: false} ->
+        "#{commit.short}'s checks FAILED. Push up to it anyway? This deploys code that hasn't passed them.\n\n" <>
+          lines
+
+      {:running, _} ->
+        "#{commit.short}'s checks are still running. Push up to it anyway? This deploys code that hasn't passed them.\n\n" <>
+          lines
+
+      :off ->
+        head <> "\n\n" <> lines
+
+      _ ->
+        "#{commit.short}'s checks haven't run. Push up to it anyway? This deploys code that hasn't passed them.\n\n" <>
+          lines
+    end
+  end
+
+  @doc "Whether checks allow a push: passed, or there are none."
+  def checks_passed?(:off), do: true
+  def checks_passed?(%{ok: ok}), do: ok
+  def checks_passed?(_), do: false
+
   @doc "`3 files`, `1 file`."
   def count(n, word) when is_list(n), do: count(length(n), word)
   def count(1, word), do: "1 #{word}"

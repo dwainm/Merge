@@ -63,21 +63,9 @@ defmodule MergeWeb.HomeLive do
 
   def handle_event("push_anyway", _params, socket), do: {:noreply, push(socket)}
 
-  # Push to here: only up to one of the commits ahead, gated on that commit's own checks.
-  def handle_event("push_to", %{"sha" => sha}, socket) do
-    if checks_passed?(socket.assigns.commit_checks[sha]) do
-      {:noreply, push(socket, sha)}
-    else
-      {:noreply,
-       put_flash(
-         socket,
-         :error,
-         "#{String.slice(sha, 0, 7)}'s checks haven't passed. Use Push to here anyway."
-       )}
-    end
-  end
-
-  def handle_event("push_to_anyway", %{"sha" => sha}, socket), do: {:noreply, push(socket, sha)}
+  # Push to here: only up to one of the commits ahead. Its confirmation said whether
+  # that commit's checks passed.
+  def handle_event("push_to", %{"sha" => sha}, socket), do: {:noreply, push(socket, sha)}
 
   def handle_event("pull", _params, socket) do
     {:noreply, socket |> assign(busy: :pull) |> start_async(:pull, fn -> Drift.pull() end)}
@@ -144,10 +132,6 @@ defmodule MergeWeb.HomeLive do
   defp even_tone(%{ok: false}), do: "border-(--bad-border) bg-(--bad-bg) text-(--bad-text)"
   defp even_tone(_), do: "border-(--border) bg-(--surface) text-(--text)"
 
-  defp checks_passed?(:off), do: true
-  defp checks_passed?(%{ok: ok}), do: ok
-  defp checks_passed?(_), do: false
-
   defp load(socket) do
     {done, open} = Enum.split_with(MergeRequest.list(), &MergeRequest.done?/1)
     main = socket.assigns[:drift][:main]
@@ -179,37 +163,6 @@ defmodule MergeWeb.HomeLive do
     why <>
       " Push anyway? This deploys code that hasn't passed them.\n\n" <>
       Enum.map_join(ahead, "\n", &"#{&1.short}  #{&1.subject}")
-  end
-
-  # Push to here lists what goes and what stays, and what was checked.
-  defp push_to_confirm(ahead, commit, checks) do
-    going = Enum.drop_while(ahead, &(&1.sha != commit.sha))
-    staying = length(ahead) - length(going)
-    lines = Enum.map_join(going, "\n", &"#{&1.short}  #{&1.subject}")
-
-    head =
-      "Push #{count(going, "commit")} to GitHub, up to #{commit.short}? This deploys; " <>
-        "#{count(staying, "commit")} above #{if staying == 1, do: "stays", else: "stay"} ahead."
-
-    case checks do
-      %{ok: true} ->
-        head <> "\n\n" <> lines <> "\n\nChecks passed on #{commit.short}."
-
-      %{ok: false} ->
-        "#{commit.short}'s checks FAILED. Push up to it anyway? This deploys code that hasn't passed them.\n\n" <>
-          lines
-
-      {:running, _} ->
-        "#{commit.short}'s checks are still running. Push up to it anyway? This deploys code that hasn't passed them.\n\n" <>
-          lines
-
-      :off ->
-        head <> "\n\n" <> lines
-
-      _ ->
-        "#{commit.short}'s checks haven't run. Push up to it anyway? This deploys code that hasn't passed them.\n\n" <>
-          lines
-    end
   end
 
   defp push_label(:push, _checks), do: "Pushing…"
@@ -312,7 +265,7 @@ defmodule MergeWeb.HomeLive do
         <%!-- Every commit but the tip can be pushed to on its own: GitHub's main moves to it
              and the ones above stay ahead. The button follows that commit's own checks. --%>
         <ol class="mt-1 space-y-1 text-sm">
-          <li :for={c <- @drift.ahead} class="group flex items-start gap-2">
+          <li :for={c <- @drift.ahead} class="flex items-start gap-2">
             <span class="shrink-0 font-mono text-xs leading-5 text-(--warn-text)">{c.short}</span>
             <span class="min-w-0 flex-1 text-(--text)">{c.subject}</span>
             <span class="shrink-0 text-xs leading-5 text-(--text-muted)">{ago(c.date)}</span>
@@ -385,38 +338,6 @@ defmodule MergeWeb.HomeLive do
         </li>
       </ul>
     </section>
-    """
-  end
-
-  attr :commit, :map, required: true
-  attr :ahead, :list, required: true
-  attr :checks, :any, required: true
-  attr :busy, :atom, required: true
-
-  # Quiet until the row is hovered; plain when the commit's checks passed (or there are
-  # none), red "anyway" when they haven't.
-  defp push_to(assigns) do
-    assigns = assign(assigns, :passed, checks_passed?(assigns.checks))
-
-    ~H"""
-    <button
-      id={"push-to-#{@commit.short}"}
-      phx-click={if @passed, do: "push_to", else: "push_to_anyway"}
-      phx-value-sha={@commit.sha}
-      data-confirm={push_to_confirm(@ahead, @commit, @checks)}
-      disabled={@busy != nil}
-      title={"Push main to GitHub only up to #{@commit.short}"}
-      class={[
-        "shrink-0 rounded px-2 py-0.5 text-xs font-medium ring-1 transition-opacity",
-        "sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100 disabled:opacity-50",
-        if(@passed,
-          do: "bg-(--surface) text-(--warn-text) ring-(--warn-border) hover:bg-(--warn-bg)",
-          else: "bg-(--surface) text-(--bad-text) ring-(--bad-border) hover:bg-(--bad-bg)"
-        )
-      ]}
-    >
-      {if @passed, do: "Push to here", else: "Push to here anyway"}
-    </button>
     """
   end
 
