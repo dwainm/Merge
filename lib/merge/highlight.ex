@@ -48,7 +48,9 @@ defmodule Merge.Highlight do
   defp split_lines(tokens) do
     {lines, current} =
       Enum.reduce(tokens, {[], []}, fn {type, meta, value}, acc ->
-        [first | rest] = value |> to_string() |> String.split("\n")
+        # A token's value is a binary, a charlist, or one codepoint: the Elixir lexer
+        # gives a stray backtick as {:error, meta, ?`}, which to_string/1 would print as "96".
+        [first | rest] = value |> List.wrap() |> IO.chardata_to_string() |> String.split("\n")
 
         Enum.reduce(rest, add(acc, {type, meta, first}), fn part, {lines, current} ->
           {[Enum.reverse(current) | lines], []} |> add({type, meta, part})
