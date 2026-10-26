@@ -60,6 +60,13 @@ defmodule MergeWeb.HomeLive do
     {:noreply, socket |> assign(busy: :pull) |> start_async(:pull, fn -> Drift.pull() end)}
   end
 
+  # Beside "Push will be refused … Pull first.": main and GitHub's have diverged, so
+  # GitHub's main comes in with a merge commit; the dry run then reads again.
+  def handle_event("merge_github", _params, socket) do
+    {:noreply,
+     socket |> assign(busy: :pull) |> start_async(:merge_github, fn -> Drift.merge_github() end)}
+  end
+
   @impl true
   def handle_async(:push, {:ok, result}, socket) do
     {:noreply, socket |> assign(busy: nil) |> show_push(result)}
@@ -70,6 +77,30 @@ defmodule MergeWeb.HomeLive do
   end
 
   def handle_async(:pull, {:ok, {:error, output}}, socket) do
+    {:noreply, socket |> assign(busy: nil) |> put_flash(:error, "Pull failed: " <> output)}
+  end
+
+  def handle_async(:merge_github, {:ok, {:ok, sha}}, socket) do
+    {:noreply,
+     socket
+     |> assign(busy: nil)
+     |> put_flash(
+       :info,
+       "Pulled: GitHub's main is merged into main at #{String.slice(sha, 0, 7)}."
+     )}
+  end
+
+  def handle_async(:merge_github, {:ok, {:conflicts, files}}, socket) do
+    {:noreply,
+     socket
+     |> assign(busy: nil)
+     |> put_flash(
+       :error,
+       "Pull stopped: GitHub's main conflicts with main in #{Enum.join(files, ", ")}. Nothing changed."
+     )}
+  end
+
+  def handle_async(:merge_github, {:ok, {:error, output}}, socket) do
     {:noreply, socket |> assign(busy: nil) |> put_flash(:error, "Pull failed: " <> output)}
   end
 
@@ -95,31 +126,44 @@ defmodule MergeWeb.HomeLive do
     socket |> assign(busy: :push) |> start_async(:push, fn -> Drift.push(Drift.repo(), to) end)
   end
 
-  # The checks of main's tip, and of each commit ahead of GitHub (every one was a tip
-  # once, unless superseded before its turn): :off without a check command, else
-  # Checks.status/1.
+  # The checks and image build of main's tip, and of each commit ahead of GitHub (every
+  # one was a tip once, unless superseded before its turn): :off without a check
+  # command, else Checks.status/1 and Checks.image_status/1.
   defp load_checks(socket) do
     on? =
       match?(pid when is_pid(pid), Process.whereis(Checks)) and Checks.enabled?()
 
     status = fn sha -> if on?, do: Checks.status(sha), else: :off end
+    image = fn sha -> if on?, do: Checks.image_status(sha), else: :off end
 
     case socket.assigns.drift do
       %{main: main, ahead: ahead} ->
         assign(socket,
           checks: status.(main),
-          commit_checks: Map.new(ahead, &{&1.sha, status.(&1.sha)})
+          image: image.(main),
+          commit_checks: Map.new(ahead, &{&1.sha, status.(&1.sha)}),
+          commit_images: Map.new(ahead, &{&1.sha, image.(&1.sha)})
         )
 
       _ ->
-        assign(socket, checks: :off, commit_checks: %{})
+        assign(socket, checks: :off, image: :off, commit_checks: %{}, commit_images: %{})
     end
   end
 
-  # The even box: the colour of main's checks, plain when they are off or haven't run.
-  defp even_tone(%{ok: true}), do: "border-(--ok-border) bg-(--ok-bg) text-(--ok-text)"
-  defp even_tone(%{ok: false}), do: "border-(--bad-border) bg-(--bad-bg) text-(--bad-text)"
-  defp even_tone(_), do: "border-(--border) bg-(--surface) text-(--text)"
+  # The even box: green when main's checks and image build passed (or it needs none),
+  # red when either failed, plain when they are off or haven't finished.
+  defp even_tone(checks, image) do
+    cond do
+      match?(%{ok: false}, checks) or match?(%{ok: false}, image) ->
+        "border-(--bad-border) bg-(--bad-bg) text-(--bad-text)"
+
+      match?(%{ok: true}, checks) and checks_passed?(image) ->
+        "border-(--ok-border) bg-(--ok-bg) text-(--ok-text)"
+
+      true ->
+        "border-(--border) bg-(--surface) text-(--text)"
+    end
+  end
 
   defp load(socket) do
     {done, open} = Enum.split_with(MergeRequest.list(), &MergeRequest.done?/1)
@@ -139,7 +183,9 @@ defmodule MergeWeb.HomeLive do
         busy={@busy}
         last_push={@last_push}
         checks={@checks}
+        image={@image}
         commit_checks={@commit_checks}
+        commit_images={@commit_images}
       />
 
       <h1 class="mb-4 text-lg font-semibold">Merge requests</h1>
@@ -174,7 +220,9 @@ defmodule MergeWeb.HomeLive do
 
   attr :drift, :map, required: true
   attr :checks, :any, default: :off
+  attr :image, :any, default: :off
   attr :commit_checks, :map, default: %{}, doc: "the checks of each commit ahead, by sha"
+  attr :commit_images, :map, default: %{}, doc: "the image build of each commit ahead, by sha"
   attr :busy, :atom, default: nil
   attr :last_push, :map, default: nil
 
@@ -186,7 +234,7 @@ defmodule MergeWeb.HomeLive do
       <div
         :if={@drift.ahead == [] and @drift.behind == []}
         id="drift-even"
-        class={["rounded-lg border p-3", even_tone(@checks)]}
+        class={["rounded-lg border p-3", even_tone(@checks, @image)]}
       >
         <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
           <h2 class="text-sm font-semibold">
@@ -196,6 +244,7 @@ defmodule MergeWeb.HomeLive do
           <.checks_line
             sha={@drift.main}
             status={@checks}
+            image={@image}
             id="main-checks"
             show_sha={false}
             class="ml-auto"
@@ -203,7 +252,12 @@ defmodule MergeWeb.HomeLive do
         </div>
       </div>
 
-      <.checks_line :if={@drift.behind != []} sha={@drift.main} status={@checks} />
+      <.checks_line
+        :if={@drift.behind != [] and @drift.ahead == []}
+        sha={@drift.main}
+        status={@checks}
+        image={@image}
+      />
 
       <div
         :if={@drift.ahead != []}
@@ -215,8 +269,36 @@ defmodule MergeWeb.HomeLive do
           <h2 class="text-sm font-semibold text-(--warn-text)">
             main is {count(@drift.ahead, "commit")} ahead of GitHub
           </h2>
-          <.checks_line sha={@drift.main} status={@checks} id="main-checks" class="ml-auto" />
+          <.checks_line
+            sha={@drift.main}
+            status={@checks}
+            image={@image}
+            id="main-checks"
+            class="ml-auto"
+          />
         </div>
+        <%!-- Before the tap: whether GitHub will take it (git push --dry-run, every minute). --%>
+        <p
+          :if={@drift[:landing]}
+          id="push-landing"
+          class={[
+            "mt-1 text-sm font-medium",
+            if(@drift.landing == :lands, do: "text-(--ok-text)", else: "text-(--bad-text)")
+          ]}
+        >
+          {if @drift.landing == :lands, do: "✓", else: "✗"}
+          <span class="whitespace-pre-line">{landing_text(@drift.landing)}</span>
+          <button
+            :if={match?({:behind, _}, @drift.landing)}
+            id="landing-pull-button"
+            phx-click="merge_github"
+            data-confirm={"Pull #{count(@drift.behind, "commit")} from GitHub into main? main has diverged from GitHub's, so this makes a merge commit, \"Merge GitHub's main into main\", which goes through the checks like any new tip."}
+            disabled={@busy != nil}
+            class="ml-2 rounded bg-(--btn-bg) px-2 py-0.5 text-xs font-medium text-(--btn-text) hover:opacity-90 disabled:opacity-50"
+          >
+            {if @busy == :pull, do: "Pulling…", else: "Pull"}
+          </button>
+        </p>
         <%!-- Each commit has the diff up to it and its own Push: GitHub's main moves to it
              and the ones above stay ahead; the tip's is Push All. The confirmation carries
              that commit's own checks. --%>
@@ -239,6 +321,8 @@ defmodule MergeWeb.HomeLive do
               commit={c}
               ahead={@drift.ahead}
               checks={@commit_checks[c.sha]}
+              image={@commit_images[c.sha] || :off}
+              landing={@drift[:landing]}
               busy={@busy}
             />
           </li>

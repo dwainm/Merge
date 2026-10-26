@@ -6,7 +6,7 @@ After=network-online.target caddy-dev.service
 
 [Service]
 WorkingDirectory=/root/projects/merge
-ExecStart=/root/projects/merge/bin/merge serve --port 4747 --repo /root/projects/dayofplenty --check 'MIX_ENV=test MIX_TEST_PARTITION=_merge_checks; export MIX_ENV MIX_TEST_PARTITION; mix deps.get && mix compile --warnings-as-errors && mix check'
+ExecStart=/root/projects/merge/bin/merge serve --port 4747 --repo /root/projects/dayofplenty --check 'MIX_ENV=test MIX_TEST_PARTITION=_merge_checks; export MIX_ENV MIX_TEST_PARTITION; mix deps.get && mix compile --warnings-as-errors && mix check' --check-image 'docker build --quiet -t dop-merge-check .'
 Restart=always
 RestartSec=3
 

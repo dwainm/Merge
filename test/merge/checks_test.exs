@@ -12,9 +12,13 @@ defmodule Merge.ChecksTest do
     %{repo: repo, dir: dir, sha: GitRepo.git!(repo, ["rev-parse", "HEAD"]) |> String.trim()}
   end
 
-  defp checks(c, command) do
+  defp checks(c, command, image \\ nil) do
     name = :"checks_#{System.unique_integer([:positive])}"
-    start_supervised!({Checks, name: name, command: command, dir: c.dir, store: nil})
+
+    start_supervised!(
+      {Checks, name: name, command: command, image_command: image, dir: c.dir, store: nil}
+    )
+
     name
   end
 
@@ -93,5 +97,80 @@ defmodule Merge.ChecksTest do
     refute Checks.enabled?(server)
     Checks.want(c.repo, c.sha, server)
     assert :none = Checks.status(c.sha, server)
+  end
+
+  describe "the image check" do
+    @workflow """
+    on:
+      pull_request:
+        paths:
+          - "Dockerfile"
+          - "config/**"
+    """
+
+    setup c do
+      {repo, _origin} = GitRepo.with_origin()
+      GitRepo.commit!(repo, %{".github/workflows/docker.yml" => @workflow}, "Workflow")
+      GitRepo.git!(repo, ["push", "-q", "origin", "main"])
+      %{c | repo: repo}
+    end
+
+    defp image_finished(server, sha) do
+      assert_receive {:checks, ^sha}, 5_000
+
+      case Checks.image_status(sha, server) do
+        %{} = result -> result
+        _ -> image_finished(server, sha)
+      end
+    end
+
+    test "runs after the first, in the same checkout, when the tip changes a watched path", c do
+      server = checks(c, "echo first > ../order", "cat ../order; git rev-parse HEAD; echo built")
+      tip = GitRepo.commit!(c.repo, %{"Dockerfile" => "FROM elixir\n"}, "Image")
+      Checks.want(c.repo, tip, server)
+
+      assert %{ok: true} = finished(server, tip)
+      assert %{ok: true, log: log} = image_finished(server, tip)
+      assert log =~ "first"
+      assert log =~ tip
+      assert Checks.image_log(tip, server) =~ "built"
+      refute Checks.log(tip, server) =~ "built"
+    end
+
+    test "is not needed when the tip changes nothing the workflow watches", c do
+      server = checks(c, "true", "echo built")
+      tip = GitRepo.commit!(c.repo, %{"lib/app.ex" => "x\n"}, "Code")
+      Checks.want(c.repo, tip, server)
+
+      assert %{ok: true} = finished(server, tip)
+      assert :not_needed = Checks.image_status(tip, server)
+      assert nil == Checks.image_log(tip, server)
+    end
+
+    test "a failed image build is a failed result, with its output", c do
+      server = checks(c, "true", "echo 'tailwind fetch failed'; exit 1")
+      tip = GitRepo.commit!(c.repo, %{"config/prod.exs" => "x\n"}, "Config")
+      Checks.want(c.repo, tip, server)
+
+      assert %{ok: false, log: log} = image_finished(server, tip)
+      assert log =~ "tailwind fetch failed"
+    end
+
+    test "a newer tip waiting when the first check ends skips the old tip's image check", c do
+      server = checks(c, "sleep 0.3", "echo built")
+      old = GitRepo.commit!(c.repo, %{"Dockerfile" => "FROM a\n"}, "Old")
+      Checks.want(c.repo, old, server)
+      assert {:queued, nil} = Checks.image_status(old, server)
+      new = GitRepo.commit!(c.repo, %{"Dockerfile" => "FROM b\n"}, "New")
+      Checks.want(c.repo, new, server)
+
+      assert %{ok: true} = image_finished(server, new)
+      assert :none = Checks.image_status(old, server)
+    end
+
+    test "is off without an image command", c do
+      server = checks(c, "true")
+      assert :off = Checks.image_status("abc", server)
+    end
   end
 end

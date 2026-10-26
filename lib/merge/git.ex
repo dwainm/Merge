@@ -209,6 +209,19 @@ defmodule Merge.Git do
     do: git(repo, ["push", "origin", "#{commit}:refs/heads/#{branch}"])
 
   @doc """
+  What `git push --dry-run origin <branch>` says: `{:ok, output}` when GitHub
+  would take it, `{:error, output}` when git refuses. Nothing is pushed.
+  """
+  def push_dry_run(repo, branch), do: git(repo, ["push", "--dry-run", "origin", branch])
+
+  @doc "The paths `ref` changes since it left `base` (`git diff --name-only base...ref`)."
+  def changed_paths(repo, base, ref) do
+    with {:ok, out} <- git(repo, ["diff", "--name-only", "#{base}...#{ref}"]) do
+      {:ok, String.split(out, "\n", trim: true)}
+    end
+  end
+
+  @doc """
   Moves local `branch` to origin's, fast-forward only: in the worktree that has
   it checked out (a merge --ff-only there), else by fetching into the ref.
   """
@@ -216,6 +229,39 @@ defmodule Merge.Git do
     case checked_out_in(repo, branch) do
       nil -> git(repo, ["fetch", "origin", "#{branch}:#{branch}"])
       worktree -> git(worktree, ["merge", "--ff-only", "origin/#{branch}"])
+    end
+  end
+
+  @doc """
+  Merges `theirs` into local `branch` with a merge commit: in the worktree that
+  has `branch` checked out (`git merge --no-ff`), else without one (`merge-tree`,
+  `commit-tree`, `update-ref`), so a bare repo works too. Answers `{:ok, sha}`;
+  `{:conflicts, files}` and `{:error, output}` change nothing.
+  """
+  def merge_into(repo, branch, theirs, message) do
+    with :clean <- merge_check(repo, branch, theirs),
+         {:ok, ours} <- rev_parse(repo, branch),
+         {:ok, theirs} <- rev_parse(repo, theirs) do
+      case checked_out_in(repo, branch) do
+        nil -> merge_without_worktree(repo, branch, ours, theirs, message)
+        worktree -> merge_in(worktree, theirs, message)
+      end
+    end
+  end
+
+  defp merge_in(worktree, theirs, message) do
+    with {:ok, _} <- git(worktree, ["merge", "--no-ff", "--no-edit", "-m", message, theirs]) do
+      rev_parse(worktree, "HEAD")
+    end
+  end
+
+  defp merge_without_worktree(repo, branch, ours, theirs, message) do
+    with {:ok, out} <- git(repo, ["merge-tree", "--write-tree", ours, theirs]),
+         [tree | _] = String.split(out, "\n", trim: true),
+         {:ok, sha} <- git(repo, ["commit-tree", tree, "-p", ours, "-p", theirs, "-m", message]),
+         sha = String.trim(sha),
+         {:ok, _} <- git(repo, ["update-ref", "refs/heads/#{branch}", sha, ours]) do
+      {:ok, sha}
     end
   end
 

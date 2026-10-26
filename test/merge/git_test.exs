@@ -73,4 +73,67 @@ defmodule Merge.GitTest do
     assert {:error, message} = Git.rev_parse(repo, "nope")
     assert message =~ "nope"
   end
+
+  describe "merge_into" do
+    # GitHub and main both moved on from the same commit.
+    defp diverged(their_files) do
+      {repo, origin} = GitRepo.with_origin()
+      other = Path.join(Path.dirname(origin), "other")
+      {_, 0} = System.cmd("git", ["clone", "-q", origin, other], stderr_to_stdout: true)
+      theirs = GitRepo.commit!(other, their_files, "Elsewhere")
+      GitRepo.git!(other, ["push", "-q", "origin", "main"])
+      Git.fetch(repo)
+      identify(repo)
+      {repo, origin, theirs}
+    end
+
+    # A merge commit is made by git itself, so the repo says who makes it.
+    defp identify(repo) do
+      GitRepo.git!(repo, ["config", "user.name", "Test"])
+      GitRepo.git!(repo, ["config", "user.email", "test@example.com"])
+    end
+
+    test "merges GitHub's main into the checked-out main with a merge commit" do
+      {repo, _origin, theirs} = diverged(%{"OTHER.md" => "x\n"})
+      mine = GitRepo.commit!(repo, %{"MINE.md" => "y\n"}, "Mine")
+
+      assert {:ok, sha} =
+               Git.merge_into(repo, "main", "origin/main", "Merge GitHub's main into main")
+
+      assert {:ok, ^sha} = Git.rev_parse(repo, "main")
+      assert Git.ancestor?(repo, mine, sha) and Git.ancestor?(repo, theirs, sha)
+
+      assert GitRepo.git!(repo, ["log", "-1", "--format=%s %P"]) =~
+               "Merge GitHub's main into main #{mine} #{theirs}"
+
+      assert File.read!(Path.join(repo, "OTHER.md")) == "x\n"
+    end
+
+    test "works in a bare repo, where nothing is checked out" do
+      {repo, origin, theirs} = diverged(%{"OTHER.md" => "x\n"})
+      mine = GitRepo.commit!(repo, %{"MINE.md" => "y\n"}, "Mine")
+      bare = Path.join(Path.dirname(origin), "bare.git")
+      {_, 0} = System.cmd("git", ["clone", "-q", "--bare", repo, bare], stderr_to_stdout: true)
+      GitRepo.git!(bare, ["remote", "set-url", "origin", origin])
+      identify(bare)
+      GitRepo.git!(bare, ["fetch", "-q", "origin", "+refs/heads/*:refs/remotes/origin/*"])
+
+      assert {:ok, sha} =
+               Git.merge_into(bare, "main", "origin/main", "Merge GitHub's main into main")
+
+      assert {:ok, ^sha} = Git.rev_parse(bare, "main")
+      assert Git.ancestor?(bare, mine, sha) and Git.ancestor?(bare, theirs, sha)
+
+      assert {:ok, %{"OTHER.md" => "x\n", "MINE.md" => "y\n"}} =
+               {:ok, Git.cat(bare, "main", ["OTHER.md", "MINE.md"])}
+    end
+
+    test "a conflict changes nothing and names the files" do
+      {repo, _origin, _theirs} = diverged(%{"lib/app.ex" => "theirs\n"})
+      mine = GitRepo.commit!(repo, %{"lib/app.ex" => "mine\n"}, "Mine")
+
+      assert {:conflicts, ["lib/app.ex"]} = Git.merge_into(repo, "main", "origin/main", "Merge")
+      assert {:ok, ^mine} = Git.rev_parse(repo, "main")
+    end
+  end
 end

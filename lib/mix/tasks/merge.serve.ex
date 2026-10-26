@@ -15,17 +15,26 @@ defmodule Mix.Tasks.Merge.Serve do
   @impl true
   def run(args) do
     {opts, _, _} =
-      OptionParser.parse(args, strict: [port: :integer, repo: :string, check: :string])
+      OptionParser.parse(args,
+        strict: [port: :integer, repo: :string, check: :string, check_image: :string]
+      )
 
     if port = opts[:port], do: System.put_env("PORT", Integer.to_string(port))
     # Decided before the app starts, since starting it restores the store.
     Mix.Task.run("app.config")
 
-    if match?({:held, _}, MergeWeb.DevTunnel.held_by()),
-      do: Application.put_env(:merge, :store_dir, nil)
+    # Beside the service: its own checkouts for the checks, so neither moves the other's.
+    if match?({:held, _}, MergeWeb.DevTunnel.held_by()) do
+      Application.put_env(:merge, :store_dir, nil)
+      checks = Path.join([System.user_home!(), ".merge", "checks-#{System.get_env("PORT")}"])
+      Application.put_env(:merge, :checks_dir, checks)
+    end
 
     # The checks a new tip of main must pass before Push (`sh -c`, in a checkout of its own).
     if check = opts[:check], do: Application.put_env(:merge, :check_command, check)
+
+    # GitHub's image build, after the first and only when the tip touches what goes into the image.
+    if image = opts[:check_image], do: Application.put_env(:merge, :check_image_command, image)
 
     # The repo whose main the home page compares with GitHub.
     if repo = opts[:repo], do: Application.put_env(:merge, :repo, Path.expand(repo))
