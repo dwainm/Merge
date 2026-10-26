@@ -509,7 +509,7 @@ defmodule MergeWeb.HomeLive do
           </div>
         </.link>
         <.queue_button
-          :if={@queued && mr.status in [:open, :needs_work]}
+          :if={@queued && mr.status in [:open, :in_progress]}
           branch={mr.branch}
           queued={MapSet.member?(@queued, mr.branch)}
           class="border-l border-(--border) px-3"

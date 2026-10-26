@@ -67,4 +67,26 @@ defmodule MergeWeb.QueueTest do
     assert has_element?(view, "#queue-tab-#{one}", "Next")
     assert has_element?(view, "#queue-button-#{one}[aria-label=\"Take it off the queue\"]")
   end
+
+  test "Next skips one In progress, and its tab says so", %{conn: conn, branches: [one, two]} do
+    Queue.add(one)
+    Queue.add(two)
+    {:ok, _} = MergeRequest.working(one, "New direction", "agent")
+
+    {:ok, view, _html} = live(conn, ~p"/")
+    assert has_element?(view, "#queue-tab-#{one}", "In progress")
+    refute has_element?(view, "#queue-tab-#{one}", "Next")
+    assert has_element?(view, "#queue-tab-#{two}", "Next")
+  end
+
+  test "the merge request page shows In progress with the working note",
+       %{conn: conn, branches: [one, _]} do
+    {:ok, view, _html} = live(conn, MergeWeb.mr_path(one))
+    assert has_element?(view, "#mr-header", "Needs review")
+    refute has_element?(view, "#working-note")
+
+    {:ok, _} = MergeRequest.working(one, "Rebuilding to the new decision", "agent")
+    assert has_element?(view, "#mr-header", "In progress")
+    assert has_element?(view, "#working-note", "Rebuilding to the new decision")
+  end
 end

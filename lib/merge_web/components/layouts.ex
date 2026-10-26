@@ -63,7 +63,8 @@ defmodule MergeWeb.Layouts do
   attr :tabs, :list, required: true
   attr :current, :string, default: nil
 
-  # The review queue as tabs: the first still in review is Next; an approved,
+  # The review queue as tabs: the first that Needs review is Next (In progress
+  # ones are the author's turn, and say so); an approved,
   # merged or closed one fades out over a few seconds and drops away.
   defp queue_tabs(assigns) do
     ~H"""
@@ -94,6 +95,12 @@ defmodule MergeWeb.Layouts do
               class="shrink-0 rounded-full bg-(--info-bg) px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-(--info-text)"
             >
               Next
+            </span>
+            <span
+              :if={tab.status == :in_progress && !tab.leaving_at}
+              class="shrink-0 rounded-full bg-(--warn-bg) px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-(--warn-text)"
+            >
+              In progress
             </span>
             <span :if={tab.leaving_at} class="shrink-0 text-xs font-medium text-(--ok-text)">
               ✓ {MergeWeb.MergeRequestComponents.status_label(tab.status)}

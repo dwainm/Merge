@@ -32,6 +32,12 @@ defmodule Merge.MergeRequest do
   until that commit is on `origin/main` too). `merged/2` marks it when the
   coordinator merges; `Merge.Watcher` calls `check_merged/1` every minute.
 
+  The status says whose turn it is: `:open` (Needs review) is the reviewer's,
+  `:in_progress` the author's. A rejection sets `:in_progress`, and so does
+  `working/3`, when the author takes it back on their own (a new direction),
+  with a note; `addressed/4` and opening the branch again hand it back as
+  `:open`. Each `working` is told to the other agents like a comment.
+
   Closing doesn't end the process: the merge request is done, `:merged` when its
   last decision was an approval and `:closed` otherwise, and stays to look back
   at, read-only, with the diff as it was, until the server stops or the branch
@@ -69,6 +75,7 @@ defmodule Merge.MergeRequest do
     comments: [],
     decisions: [],
     addressed: [],
+    working: [],
     commits: [],
     files: [],
     waiters: %{},
@@ -198,6 +205,28 @@ defmodule Merge.MergeRequest do
   end
 
   @doc """
+  The author takes it back: the merge request is In progress, with `note`
+  (what they are doing) shown under the badge, until `addressed/4` or the
+  branch is opened again. The other agents hear it.
+  """
+  def working(branch, note \\ nil, by \\ nil), do: call(branch, {:working, note, by})
+
+  @doc """
+  The note of the `working/3` that put it In progress, or nil (not in
+  progress, or sent back by a rejection since).
+  """
+  def working_note(%{status: :in_progress} = mr) do
+    last_decision = mr.decisions |> List.last() |> then(&((&1 && &1.seq) || 0))
+
+    case mr |> Map.get(:working, []) |> List.last() do
+      %{seq: seq} = w when seq > last_decision -> w
+      _ -> nil
+    end
+  end
+
+  def working_note(_mr), do: nil
+
+  @doc """
   Records that `commit` addresses the last decision, recomputes the diff and
   starts a new round. `groups` (or a `groups` block in the note) replaces how
   the files group.
@@ -261,7 +290,10 @@ defmodule Merge.MergeRequest do
   @impl true
   def init({:restore, saved}) do
     # Fields added since it was saved take their defaults.
-    {:ok, struct(__MODULE__, saved |> Map.put(:waiters, %{}) |> number_events())}
+    saved = saved |> Map.put(:waiters, %{}) |> number_events()
+    # Sent back for work was `:needs_work` before In progress.
+    saved = if saved.status == :needs_work, do: %{saved | status: :in_progress}, else: saved
+    {:ok, struct(__MODULE__, saved)}
   end
 
   def init(attrs) do
@@ -317,8 +349,14 @@ defmodule Merge.MergeRequest do
     {:stop, :normal, :done, state}
   end
 
+  # Opening it again hands it back for review.
   def handle_call({:register, name, groups}, _from, state) do
     state = register(state, name)
+
+    {state, groups} =
+      if state.status == :in_progress,
+        do: {%{state | status: :open}, groups || state.groups},
+        else: {state, groups}
 
     if groups,
       do: {:reply, :ok, changed(%{state | groups: groups})},
@@ -414,7 +452,7 @@ defmodule Merge.MergeRequest do
 
   def handle_call(msg, _from, %{status: status} = state)
       when status in [:merged, :closed] and
-             elem(msg, 0) in [:comment, :reply, :decide, :addressed] do
+             elem(msg, 0) in [:comment, :reply, :decide, :addressed, :working] do
     {:reply, {:error, "This merge request is #{status}."}, state}
   end
 
@@ -518,7 +556,7 @@ defmodule Merge.MergeRequest do
       state = %{
         state
         | decisions: state.decisions ++ [decision],
-          status: verdict,
+          status: if(verdict == :approved, do: :approved, else: :in_progress),
           seq: state.seq + 1
       }
 
@@ -529,6 +567,31 @@ defmodule Merge.MergeRequest do
       state = changed(tell_waiters(state))
       {:reply, {:ok, decision}, state}
     end
+  end
+
+  def handle_call({:working, note, by}, _from, state) do
+    by = blank_to_nil(by) || state.opened_by
+    entry = %{note: blank_to_nil(note), by: by, seq: state.seq + 1, at: DateTime.utc_now()}
+
+    # The author knows: its cursor moves past it, unless it had news still to hear.
+    state = register(state, by)
+
+    cursors =
+      if Map.get(state.cursors, by, 0) == state.seq,
+        do: Map.put(state.cursors, by, entry.seq),
+        else: state.cursors
+
+    state = %{
+      state
+      | status: :in_progress,
+        working: Map.get(state, :working, []) ++ [entry],
+        seq: entry.seq,
+        cursors: cursors
+    }
+
+    note = if entry.note, do: ": #{entry.note}", else: ""
+    Events.emit("working", state.branch, "#{by}#{note}")
+    {:reply, {:ok, entry}, changed(tell_waiters(state))}
   end
 
   def handle_call({:addressed, commit, note, by, groups}, _from, state) do
@@ -651,12 +714,15 @@ defmodule Merge.MergeRequest do
     decision = state.decisions |> Enum.filter(&(&1.seq > cursor)) |> List.last()
     comments = Enum.filter(state.comments, &(&1.seq > cursor))
     conflicts = state |> Map.get(:conflicts, []) |> Enum.filter(&(&1.seq > cursor)) |> List.last()
+    working = state |> Map.get(:working, []) |> Enum.filter(&(&1.seq > cursor)) |> List.last()
 
     kind =
       cond do
         decision -> :decision
-        comments != [] or conflicts == nil -> :comment
-        true -> :conflicts
+        comments != [] -> :comment
+        working -> :working
+        conflicts -> :conflicts
+        true -> :comment
       end
 
     outcome = %{
@@ -665,7 +731,8 @@ defmodule Merge.MergeRequest do
       kind: kind,
       decision: decision,
       comments: comments,
-      conflicts: conflicts
+      conflicts: conflicts,
+      working: working
     }
 
     {outcome, %{state | cursors: Map.put(state.cursors, name, state.seq)}}
@@ -689,7 +756,8 @@ defmodule Merge.MergeRequest do
       merged: state.merged,
       decision: nil,
       comments: [],
-      conflicts: nil
+      conflicts: nil,
+      working: nil
     }
   end
 

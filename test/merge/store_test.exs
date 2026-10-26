@@ -70,12 +70,16 @@ defmodule Merge.StoreTest do
 
     old =
       mr
-      |> Map.drop([:seq, :cursors, :waiting])
+      |> Map.drop([:seq, :cursors, :waiting, :working])
+      |> Map.put(:status, :needs_work)
       |> Map.update!(:comments, fn cs -> Enum.map(cs, &Map.delete(&1, :seq)) end)
       |> Map.update!(:decisions, fn ds -> Enum.map(ds, &Map.delete(&1, :seq)) end)
 
     Merge.Store.put(old)
     MergeRequest.restore_all()
+
+    # Sent back for work comes back In progress.
+    assert {:ok, %{status: :in_progress}} = MergeRequest.get(branch)
 
     # The decision wasn't addressed, so agent-a hears it, with its round's comment, once.
     assert {:ok, %{kind: :decision, comments: [%{body: "Why empty?"}]}} =

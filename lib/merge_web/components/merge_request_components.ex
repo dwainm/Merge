@@ -8,14 +8,19 @@ defmodule MergeWeb.MergeRequestComponents do
 
   def status(assigns) do
     ~H"""
-    <span class={[
-      "shrink-0 rounded-full px-2 py-0.5 text-xs font-medium",
-      @status in [:open, :needs_work] && "bg-(--info-bg) text-(--info-text)",
-      @status == :approved && "bg-(--ok-bg) text-(--ok-text)",
-      @status == :merged && @merged && @merged.pushed && "bg-(--merged-bg) text-(--merged-text)",
-      @status == :merged && !(@merged && @merged.pushed) && "bg-(--pending-bg) text-(--pending-text)",
-      @status == :closed && "bg-(--surface-2) text-(--text-2)"
-    ]}>
+    <span class={
+      [
+        "shrink-0 rounded-full px-2 py-0.5 text-xs font-medium",
+        # The reviewer's turn is blue, the author's amber.
+        @status == :open && "bg-(--info-bg) text-(--info-text)",
+        @status == :in_progress && "bg-(--warn-bg) text-(--warn-text)",
+        @status == :approved && "bg-(--ok-bg) text-(--ok-text)",
+        @status == :merged && @merged && @merged.pushed && "bg-(--merged-bg) text-(--merged-text)",
+        @status == :merged && !(@merged && @merged.pushed) &&
+          "bg-(--pending-bg) text-(--pending-text)",
+        @status == :closed && "bg-(--surface-2) text-(--text-2)"
+      ]
+    }>
       {status_label(@status, @merged)}
     </span>
     """
@@ -54,10 +59,9 @@ defmodule MergeWeb.MergeRequestComponents do
   def status_label(:merged, %{pushed: false}), do: "Merged"
   def status_label(status, _merged), do: base_label(status)
 
-  defp base_label(:open), do: "Review"
+  defp base_label(:open), do: "Needs review"
+  defp base_label(:in_progress), do: "In progress"
   defp base_label(:approved), do: "Approved"
-  # Sent back for work is still under review, as far as the badge goes.
-  defp base_label(:needs_work), do: "Review"
   defp base_label(:merged), do: "Merged"
   defp base_label(:closed), do: "Closed"
 

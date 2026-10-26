@@ -38,6 +38,7 @@ defmodule MergeWeb.Router do
     post "/show", ApiController, :show
     post "/wait", ApiController, :wait
     post "/addressed", ApiController, :addressed
+    post "/working", ApiController, :working
     post "/reply", ApiController, :reply
     post "/merged", ApiController, :merged
     post "/close", ApiController, :close
