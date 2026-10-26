@@ -298,6 +298,64 @@ defmodule Merge.MergeRequestTest do
     assert {:ok, %{branch_state: :gone, files: [_ | _]}} = MergeRequest.get(c.branch)
   end
 
+  describe "whose turn it is" do
+    test "Reject puts it In progress, and addressed hands it back for review", c do
+      {:ok, _} = MergeRequest.decide(c.branch, :needs_work, "Keep hello.")
+      assert {:ok, %{status: :in_progress} = mr} = MergeRequest.get(c.branch)
+      # Sent back by a Reject: no working note.
+      assert MergeRequest.working_note(mr) == nil
+
+      {:ok, _} = MergeRequest.addressed(c.branch, "HEAD", "Kept it")
+      assert {:ok, %{status: :open}} = MergeRequest.get(c.branch)
+    end
+
+    test "working puts it In progress with its note, and the other agents hear it", c do
+      {:ok, _, :existing} = MergeRequest.open(%{branch: c.branch, repo: c.repo, opened_by: "ceo"})
+      task = Task.async(fn -> MergeRequest.wait(c.branch, "ceo", 5_000) end)
+      wait_for_waiters(c.branch, 1)
+
+      assert {:ok, %{note: "Rebuilding to the new decision"}} =
+               MergeRequest.working(c.branch, "Rebuilding to the new decision", "agent-a")
+
+      assert {:ok, %{kind: :working, status: :in_progress, working: %{by: "agent-a"} = w}} =
+               Task.await(task)
+
+      assert w.note == "Rebuilding to the new decision"
+      text = Merge.Report.outcome(%{branch: c.branch, kind: :working, working: w}, nil)
+      assert text =~ "IN PROGRESS: #{c.branch}"
+      assert text =~ "Rebuilding to the new decision"
+
+      assert {:ok, %{status: :in_progress} = mr} = MergeRequest.get(c.branch)
+      assert %{note: "Rebuilding to the new decision"} = MergeRequest.working_note(mr)
+
+      # The author doesn't hear its own.
+      assert {:ok, :timeout} = MergeRequest.wait(c.branch, "agent-a", 50)
+
+      {:ok, _} = MergeRequest.addressed(c.branch, "HEAD")
+      assert {:ok, %{status: :open} = mr} = MergeRequest.get(c.branch)
+      assert MergeRequest.working_note(mr) == nil
+    end
+
+    test "opening the branch again hands it back for review", c do
+      {:ok, _} = MergeRequest.working(c.branch, "New direction", "agent-a")
+
+      assert {:ok, %{status: :open}, :existing} =
+               MergeRequest.open(%{branch: c.branch, repo: c.repo, opened_by: "agent-a"})
+    end
+
+    test "a later Reject drops the old working note", c do
+      {:ok, _} = MergeRequest.working(c.branch, "New direction", "agent-a")
+      {:ok, _} = MergeRequest.decide(c.branch, :needs_work, "Not this either.")
+      assert {:ok, %{status: :in_progress} = mr} = MergeRequest.get(c.branch)
+      assert MergeRequest.working_note(mr) == nil
+    end
+
+    test "a closed one can't be put In progress", c do
+      {:ok, :closed} = MergeRequest.close(c.branch)
+      assert {:error, _} = MergeRequest.working(c.branch, "Too late")
+    end
+  end
+
   defp wait_for_waiters(branch, n) do
     case MergeRequest.get(branch) do
       {:ok, %{waiting: waiting}} when length(waiting) == n -> :ok

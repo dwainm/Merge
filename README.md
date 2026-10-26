@@ -22,6 +22,9 @@ No GitHub and no database: each merge request is a process, gone when the server
     merge mr addressed <branch> <commit> [--note "..."] [--groups F] [--as NAME]
         merge mr addressed checkin HEAD --note "Kept hello, added the test"
 
+    merge mr working <branch> [--note "..."] [--as NAME]
+        merge mr working stock-rules --note "Rebuilding to the minimum per level decision"
+
     merge mr reply <branch> <comment-id> "<answer>" [--as NAME]
         merge mr reply checkin 3 "On it: moving the check into the action"
 
@@ -32,13 +35,13 @@ No GitHub and no database: each merge request is a process, gone when the server
         merge mr close checkin
 
     merge mr list
-        merge mr list                   # checkin  open  Coffee shop check-in  (waiting: checkin)  <url>
+        merge mr list                   # checkin  needs review  Coffee shop check-in  (waiting: checkin)  <url>
 
     merge mr watch [--since TIME]
         merge mr watch --since 2h       # 2026-10-19T14:03:22Z comment checkin lib/app.ex:12 reviewer: Why?
 
 `mr watch` prints one line per event, as it happens, and never returns: `opened`, `comment`,
-`approved`, `needs-work`, `addressed`, `new-commits`, `conflicts`, `merges-cleanly`, `rewritten`,
+`approved`, `needs-work`, `working`, `addressed`, `new-commits`, `conflicts`, `merges-cleanly`, `rewritten`,
 `branch-gone`, `merged`, `on-origin`, `closed`, and for `main`: `main-tip`, `checks-running`,
 `checks-passed`, `checks-failed`, `image-running`, `image-passed`, `image-failed`, `pushed`,
 `push-failed`. The lines are kept in
@@ -103,8 +106,9 @@ A push is checked by fetching again; a success shows for a few seconds, a failur
 stays until the next push. A commit's Push moves GitHub's main to that commit
 and the ones above stay ahead. Every
 minute the server fetches, refreshes this, and marks merge requests whose branch
-is on main as "Merged", then "On origin" once origin/main has it. The badges: Review
-(also when sent back for work), Approved, Merged, On origin, Closed.
+is on main as "Merged", then "On origin" once origin/main has it. The badges: Needs review
+(blue: the reviewer's turn), In progress (amber: the author's), Approved, Merged,
+On origin, Closed.
 
 ## Checks before Push
 
@@ -151,7 +155,7 @@ rest, and when the home page loads. Read-only: Merge starts and stops nothing.
 
     claude mcp add --transport http merge http://localhost:4747/mcp
 
-Tools: `open_merge_request`, `wait_for_review`, `addressed`, `close_merge_request`, `list_merge_requests`, `watch_events`.
+Tools: `open_merge_request`, `wait_for_review`, `addressed`, `working`, `reply`, `close_merge_request`, `list_merge_requests`, `watch_events`.
 Use the service's port (4747), or the one `merge serve` printed.
 
 ## The service
@@ -181,6 +185,11 @@ reloader picks up code changes, but not new libraries).
 - **The review goes in rounds.** A comment belongs to the round it was written in; a decision closes
   the round; `addressed` answers it with a commit and a note, recomputes the diff and opens the next
   round. The wait output lists this round's comments, then the earlier ones with their notes.
+- **The badge says whose turn it is.** Needs review: the reviewer's (open, after `addressed`, after
+  opening the branch again). In progress: the author's, set by Reject and by `merge mr working`
+  (MCP `working`) when the direction changes without a Reject; its note shows under the badge,
+  in the other agents' `mr wait` and in `mr list`. `addressed` or opening the branch again hands it
+  back. The queue's Next skips In progress.
 - **Reject needs a note or a comment in its round.** Approve doesn't.
 - **`addressed` takes any commit reachable from the branch.**
 - **The base is `origin/main` when the repo has it, else `main`**; `--base` reviews a stacked

@@ -7,7 +7,8 @@ defmodule Merge.Report do
   The news of a wait as the text an agent reads as its next prompt: COMMENT for
   new comments (each with its id, to answer with `merge mr reply`), APPROVED or NEEDS WORK for a decision (with the comments since
   the agent last heard), CONFLICTS when the branch no longer merges cleanly
-  into main (also added to the others), or the merge request closing. `via` is `:cli` or
+  into main (also added to the others), IN PROGRESS when the author took it back
+  with `working` (its note also added to a comment's news), or the merge request closing. `via` is `:cli` or
   `:mcp`, for the hint on what to do next.
   """
   def outcome(o, url, via \\ :cli)
@@ -30,6 +31,16 @@ defmodule Merge.Report do
     ])
   end
 
+  def outcome(%{kind: :working} = o, url, via) do
+    IO.iodata_to_binary([
+      "IN PROGRESS: #{o.branch}\n",
+      if(url, do: "#{url}\n", else: []),
+      working(o.working),
+      conflicts(o[:conflicts], via),
+      listen(o.branch, via)
+    ])
+  end
+
   def outcome(%{kind: :comment} = o, url, via) do
     heading = if length(o.comments) == 1, do: "COMMENT", else: "#{length(o.comments)} COMMENTS"
 
@@ -39,6 +50,7 @@ defmodule Merge.Report do
       "\n",
       Enum.map(o.comments, &comment/1),
       answer(o.branch, via),
+      working(o[:working]),
       conflicts(o[:conflicts], via),
       listen(o.branch, via)
     ])
@@ -87,6 +99,13 @@ defmodule Merge.Report do
 
   defp answer(branch, :mcp) do
     "\nAnswer each one: call reply with branch #{branch}, the comment's id and your answer.\n"
+  end
+
+  defp working(nil), do: []
+
+  defp working(w) do
+    note = if w.note, do: ": #{w.note}", else: ""
+    "\n#{w.by} is working on it again#{note}\nIt is In progress until they mark it addressed.\n"
   end
 
   defp conflicts(nil, _via), do: []

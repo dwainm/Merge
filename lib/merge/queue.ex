@@ -1,7 +1,8 @@
 defmodule Merge.Queue do
   @moduledoc """
   The reviewer's queue: merge requests added with "Add to queue", shown as tabs
-  at the top of every page, oldest first; the first still in review is "Next".
+  at the top of every page, oldest first; the first that Needs review is "Next"
+  (one In progress is the author's turn, so it's skipped).
 
   Once one is approved, merged or closed it stays for `linger_ms/0`, fading,
   then drops out. That is worked out from the merge request when the tabs are
@@ -44,7 +45,7 @@ defmodule Merge.Queue do
   @doc """
   The tabs, from the queue and the merge requests: `%{branch, title, status,
   added_at, leaving_at, next}`. `leaving_at` is when a decided one drops out
-  (nil while in review); `next` marks the first still in review.
+  (nil while in review); `next` marks the first that Needs review.
   """
   def tabs(now \\ DateTime.utc_now()) do
     mrs = Map.new(MergeRequest.list(), &{&1.branch, &1})
@@ -62,7 +63,7 @@ defmodule Merge.Queue do
       end
       |> Enum.filter(&(&1.leaving_at == nil or DateTime.compare(&1.leaving_at, now) == :gt))
 
-    case Enum.find_index(tabs, &(&1.leaving_at == nil)) do
+    case Enum.find_index(tabs, &(&1.leaving_at == nil and &1.status != :in_progress)) do
       nil -> tabs
       i -> List.update_at(tabs, i, &%{&1 | next: true})
     end

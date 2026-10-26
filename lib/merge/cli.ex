@@ -13,6 +13,7 @@ defmodule Merge.CLI do
   merge mr open <branch> [--repo PATH] [--base BRANCH] [--title T] [--body B | --body-file F] [--groups F] [--as NAME]
   merge mr wait <branch> [--as NAME]      returns on each comment or decision; run it again to keep listening
   merge mr addressed <branch> <commit> [--note "..."] [--groups F] [--as NAME]
+  merge mr working <branch> [--note "..."] [--as NAME]   In progress: you're on it again, until addressed
   merge mr reply <branch> <comment-id> "<answer>" [--as NAME]   shown under the comment
   merge mr merged <branch> [--commit SHA]  marks it merged (found on main when no --commit)
   merge mr close <branch>
@@ -92,6 +93,14 @@ defmodule Merge.CLI do
     end
   end
 
+  defp command(["mr", "working", branch], opts) do
+    with {:ok, %{"url" => url}} <-
+           post("/api/working", %{branch: branch, note: opts[:note], as: agent(opts)}) do
+      IO.puts("In progress: #{branch}. #{url}")
+      IO.puts("When it is ready again: merge mr addressed #{branch} <commit> --note \"...\"")
+    end
+  end
+
   defp command(["mr", "reply", branch, id | words], opts) when words != [] do
     with {:ok, %{"url" => url}} <-
            post("/api/reply", %{
@@ -146,8 +155,10 @@ defmodule Merge.CLI do
           |> Enum.filter(& &1)
           |> Enum.map_join(&("  " <> &1))
 
+        note = if mr["working"], do: ": #{mr["working"]}", else: ""
+
         IO.puts(
-          "#{mr["branch"]}  #{state(mr["status"])}#{merged}#{flags}  #{mr["title"]}  (#{waiting})  #{mr["url"]}"
+          "#{mr["branch"]}  #{state(mr["status"])}#{note}#{merged}#{flags}  #{mr["title"]}  (#{waiting})  #{mr["url"]}"
         )
       end
 
@@ -247,8 +258,8 @@ defmodule Merge.CLI do
     end
   end
 
-  defp state("open"), do: "review"
-  defp state("needs_work"), do: "review"
+  defp state("open"), do: "needs review"
+  defp state("in_progress"), do: "in progress"
   defp state("approved"), do: "approved"
   defp state("merged"), do: "merged"
   defp state("closed"), do: "closed"

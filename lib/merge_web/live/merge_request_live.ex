@@ -261,7 +261,7 @@ defmodule MergeWeb.MergeRequestLive do
             <.checks_pill check={@pill} />
             <.status status={@mr.status} merged={@mr.merged} />
             <.queue_button
-              :if={@mr.status in [:open, :needs_work]}
+              :if={@mr.status in [:open, :in_progress]}
               branch={@mr.branch}
               queued={Enum.any?(@queue, &(&1.branch == @mr.branch))}
               class="ml-1 rounded-md border border-(--border) px-2 py-0.5"
@@ -283,6 +283,16 @@ defmodule MergeWeb.MergeRequestLive do
           </span>
           <span :if={!@tree} id="mr-tree" class="text-(--text-faint)">no tree</span>
         </div>
+        <p
+          :if={working = MergeRequest.working_note(@mr)}
+          id="working-note"
+          class="mt-2 flex flex-wrap items-baseline gap-x-2 rounded-md border border-(--warn-border) bg-(--warn-bg) px-3 py-1.5 text-sm text-(--warn-text)"
+        >
+          <span>
+            <span class="font-medium">In progress</span>{if(working.note, do: ": #{working.note}")}
+          </span>
+          <span class="text-xs opacity-80">{working.by}, {ago(working.at)}</span>
+        </p>
         <div
           :if={@mr.body != ""}
           id="mr-body"
