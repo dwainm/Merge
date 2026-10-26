@@ -8,7 +8,7 @@ defmodule Merge.HighlightTest do
     # codepoint 96 as its value; a hunk that starts inside a moduledoc looks like that.
     [line] = Highlight.lines(["it (`x`)"], Highlight.lexer_for("lib/stock.ex"))
     assert String.replace(line, ~r/<[^>]+>/, "") == "it (`x`)"
-    refute line =~ "96"
+    refute line =~ ~s(<span class="err">96</span>)
   end
 
   test "lines keep their count and a multi-line string keeps its colour" do

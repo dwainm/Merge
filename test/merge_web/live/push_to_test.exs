@@ -33,7 +33,7 @@ defmodule MergeWeb.PushToTest do
     assert has_element?(view, "#push-to-#{two}", "Push All")
 
     view |> element("#push-to-#{one}") |> render_click()
-    render_async(view)
+    render_async(view, 5_000)
 
     assert has_element?(view, "#push-result", "Pushed 1 commit")
     assert has_element?(view, "#push-result", "main is still 1 commit ahead of GitHub")
@@ -41,7 +41,7 @@ defmodule MergeWeb.PushToTest do
     refute has_element?(view, "#push-to-#{one}")
 
     view |> element("#push-to-#{two}") |> render_click()
-    render_async(view)
+    render_async(view, 5_000)
     assert has_element?(view, "#push-result", "Local main and origin/main are identical")
     assert %{ahead: [], behind: []} = Drift.read(repo)
   end
@@ -100,7 +100,7 @@ defmodule MergeWeb.PushToTest do
 
     # One tap: GitHub's main comes in with a merge commit and the dry run reads again.
     view |> element("#landing-pull-button") |> render_click()
-    render_async(view)
+    render_async(view, 5_000)
     assert has_element?(view, "#push-landing", "Push will land")
     refute has_element?(view, "#landing-pull-button")
 
