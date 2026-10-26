@@ -102,9 +102,10 @@ main into main with a merge commit ("Merge GitHub's main into main", never a reb
 a conflict changes nothing and names the files), a new tip that runs through the
 checks like any other, and the line turns into "Push will land". The Pull under
 "GitHub is N commits ahead" stays fast-forward only.
-A push is checked by fetching again; a success shows for a few seconds, a failure
-stays until the next push. A commit's Push moves GitHub's main to that commit
-and the ones above stay ahead. Every
+A push is judged by git's answer, then by a fetch: GitHub's main must have the
+commit that went. A success shows for a few seconds, a failure stays until the
+next push. A commit's Push moves GitHub's main to that commit and the ones above
+stay ahead. Every
 minute the server fetches, refreshes this, and marks merge requests whose branch
 is on main as "Merged", then "On origin" once origin/main has it. The badges: Needs review
 (blue: the reviewer's turn), In progress (amber: the author's), Approved, Merged,

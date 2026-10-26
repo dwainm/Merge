@@ -37,6 +37,25 @@ defmodule Merge.DriftTest do
     assert %{ahead: [], behind: []} = Drift.read(repo)
   end
 
+  test "a push is judged by what went, while main moves on under it", %{repo: repo} do
+    # What happened on 26 Oct 2026: Push was tapped on main's tip; within seconds another
+    # branch was merged into main. Its commits are older than the tip by date, so `git log
+    # origin/main..main` lists them below it: a verdict read off that list thinks they were
+    # meant to go and sees them missing from GitHub.
+    GitRepo.git!(repo, ["checkout", "-q", "-b", "side"])
+    side = GitRepo.commit!(repo, %{"SIDE.md" => "s\n"}, "Side, older")
+    GitRepo.git!(repo, ["checkout", "-q", "main"])
+    tip = GitRepo.commit!(repo, %{"README.md" => "# App\n"}, "The tip that was pushed")
+    GitRepo.git!(repo, ["merge", "-q", "--no-ff", "-m", "Merge side", "side"])
+    assert [_merge, %{sha: ^tip}, %{sha: ^side}] = Drift.read(repo).ahead
+
+    assert %{ok: true, pushed: true, origin: ^tip, commits: [%{sha: ^tip}]} =
+             result = Drift.push(repo, tip)
+
+    assert [%{subject: "Merge side"}, %{sha: ^side}] = result.left
+    assert %{ahead: [_, _], behind: []} = Drift.read(repo)
+  end
+
   test "a rejected push says so and changes nothing", %{repo: repo, origin: origin} do
     # GitHub moves on without us: our main and theirs diverge.
     other = Path.join(Path.dirname(origin), "other")
