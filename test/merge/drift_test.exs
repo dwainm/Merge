@@ -61,4 +61,43 @@ defmodule Merge.DriftTest do
     assert {:ok, _} = Drift.pull(repo)
     assert %{ahead: [], behind: [], main: ^theirs} = Drift.read(repo)
   end
+
+  describe "whether a push will land" do
+    test "lands when git's dry run would push", %{repo: repo} do
+      GitRepo.commit!(repo, %{"README.md" => "# App\n"}, "Add a readme")
+      assert {:ok, _} = dry_run = Git.push_dry_run(repo, "main")
+      assert Drift.landing([], dry_run) == :lands
+      # Nothing went.
+      assert %{ahead: [_]} = Drift.read(repo)
+    end
+
+    test "refused while GitHub has commits main hasn't, without asking git" do
+      assert Drift.landing([%{sha: "a"}, %{sha: "b"}], nil) == {:behind, 2}
+    end
+
+    test "refused for another reason: git's own words, without its hints", %{repo: repo} do
+      GitRepo.commit!(repo, %{"README.md" => "# App\n"}, "Add a readme")
+      GitRepo.git!(repo, ["remote", "set-url", "--push", "origin", "/nowhere/at/all.git"])
+
+      assert {:error, output} = dry_run = Git.push_dry_run(repo, "main")
+      assert {:refused, message} = Drift.landing([], dry_run)
+      assert message =~ "nowhere"
+      refute message =~ "hint:"
+      assert output =~ "nowhere"
+    end
+
+    test "git's rejection reads as git said it" do
+      output = """
+      To github.com:dwainm/dayofplenty.git
+       ! [rejected]        main -> main (fetch first)
+      error: failed to push some refs to 'github.com:dwainm/dayofplenty.git'
+      hint: Updates were rejected because the remote contains work that you do not
+      """
+
+      assert Drift.landing([], {:error, output}) ==
+               {:refused,
+                "! [rejected]        main -> main (fetch first)\n" <>
+                  "error: failed to push some refs to 'github.com:dwainm/dayofplenty.git'"}
+    end
+  end
 end

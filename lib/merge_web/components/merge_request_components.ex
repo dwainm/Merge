@@ -350,13 +350,15 @@ defmodule MergeWeb.MergeRequestComponents do
   attr :commit, :map, required: true
   attr :ahead, :list, required: true
   attr :checks, :any, required: true
+  attr :image, :any, default: :off, doc: "Merge.Checks.image_status/1 of the commit"
+  attr :landing, :any, default: nil, doc: "Merge.Drift.landing/2, nil when unknown"
   attr :busy, :atom, required: true
 
   @doc """
   The Push of one of the commits ahead of GitHub: GitHub's main moves to it and
   the ones above stay ahead; on the tip it is Push All. The confirmation says
-  what goes, and whether the commit's checks passed; the page handles `push_to`
-  with the sha.
+  what goes, whether the commit's checks and image build passed, and whether
+  the push will land; the page handles `push_to` with the sha.
   """
   def push_to(assigns) do
     assigns =
@@ -371,7 +373,7 @@ defmodule MergeWeb.MergeRequestComponents do
       id={"push-to-#{@commit.short}"}
       phx-click="push_to"
       phx-value-sha={@commit.sha}
-      data-confirm={push_to_confirm(@ahead, @commit, @checks)}
+      data-confirm={push_to_confirm(@ahead, @commit, @checks, @image, @landing)}
       disabled={@busy != nil}
       title={
         if @all, do: "Push main to GitHub", else: "Push main to GitHub only up to #{@commit.short}"
@@ -383,8 +385,9 @@ defmodule MergeWeb.MergeRequestComponents do
     """
   end
 
-  # The confirmation lists what goes and what stays, and how the commit's checks went.
-  def push_to_confirm(ahead, commit, checks) do
+  # The confirmation lists what goes and what stays, how the commit's checks and image
+  # build went, and whether GitHub will take it.
+  def push_to_confirm(ahead, commit, checks, image \\ :off, landing \\ nil) do
     going = Enum.drop_while(ahead, &(&1.sha != commit.sha))
     staying = length(ahead) - length(going)
     lines = Enum.map_join(going, "\n", &"#{&1.short}  #{&1.subject}")
@@ -396,22 +399,54 @@ defmodule MergeWeb.MergeRequestComponents do
           "Push #{count(going, "commit")} to GitHub, up to #{commit.short}? This deploys; " <>
             "#{count(staying, "commit")} above #{if staying == 1, do: "stays", else: "stay"} ahead."
 
-    anyway = fn why ->
-      "#{commit.short}'s checks #{why}. Push anyway? This deploys code that hasn't passed them.\n\n" <>
-        lines
-    end
+    land = if landing, do: "\n\n" <> landing_text(landing), else: ""
 
-    case checks do
-      %{ok: true} -> head <> "\n\n" <> lines <> "\n\nChecks passed on #{commit.short}."
-      :off -> head <> "\n\n" <> lines
-      %{ok: false} -> anyway.("FAILED")
-      {:running, _} -> anyway.("are still running")
-      _ -> anyway.("haven't run")
+    held =
+      Enum.reject([held_by("checks", checks), held_by("image build", image)], &is_nil/1)
+
+    passed =
+      Enum.reject(
+        [
+          match?(%{ok: true}, checks) && "Checks passed on #{commit.short}.",
+          match?(%{ok: true}, image) && "Image build passed.",
+          image == :not_needed && "Image build not needed."
+        ],
+        &(!&1)
+      )
+
+    case {held, passed} do
+      {[], []} ->
+        head <> "\n\n" <> lines <> land
+
+      {[], passed} ->
+        head <> "\n\n" <> lines <> "\n\n" <> Enum.join(passed, " ") <> land
+
+      {held, _} ->
+        "#{commit.short}'s #{Enum.join(held, ", and its ")}. Push anyway? " <>
+          "This deploys code that hasn't passed them.\n\n" <> lines <> land
     end
   end
 
-  @doc "Whether checks allow a push: passed, or there are none."
+  # Why a check holds a push back, or nil when it doesn't.
+  defp held_by(_what, status) when status in [:off, :not_needed], do: nil
+  defp held_by(_what, %{ok: true}), do: nil
+  defp held_by(what, %{ok: false}), do: "#{what} FAILED"
+  defp held_by("checks", {:running, _}), do: "checks are still running"
+  defp held_by(what, {:running, _}), do: "#{what} is still running"
+  defp held_by("checks", _), do: "checks haven't run"
+  defp held_by(what, _), do: "#{what} hasn't run"
+
+  @doc "Whether a push of main will land, in words (`Merge.Drift.landing/2`)."
+  def landing_text(:lands), do: "Push will land."
+
+  def landing_text({:behind, n}),
+    do: "Push will be refused: GitHub has #{count(n, "commit")} you don't. Pull first."
+
+  def landing_text({:refused, message}), do: "Push will be refused: " <> message
+
+  @doc "Whether checks allow a push: passed, not needed, or there are none."
   def checks_passed?(:off), do: true
+  def checks_passed?(:not_needed), do: true
   def checks_passed?(%{ok: ok}), do: ok
   def checks_passed?(_), do: false
 
@@ -506,12 +541,16 @@ defmodule MergeWeb.MergeRequestComponents do
 
   attr :sha, :string, required: true
   attr :status, :any, required: true, doc: "Merge.Checks.status/1, or :off"
+  attr :image, :any, default: :off, doc: "Merge.Checks.image_status/1, or :off"
   attr :lead, :string, default: nil, doc: "what comes before, e.g. \"main at\""
   attr :id, :string, default: "checks"
   attr :show_sha, :boolean, default: true, doc: "false when the commit is already named beside it"
   attr :class, :string, default: nil
 
-  @doc "Where the checks of a commit stand, with the end of the log when they failed."
+  @doc """
+  Where the checks of a commit stand, and its image build beside them when there
+  is one, with the end of the log when they failed.
+  """
   def checks_line(%{status: :off} = assigns), do: ~H""
 
   def checks_line(assigns) do
@@ -522,7 +561,7 @@ defmodule MergeWeb.MergeRequestComponents do
       )
 
     ~H"""
-    <div id={@id} class={["text-sm", @class]}>
+    <div id={@id} class={["min-w-0 max-w-full text-sm", @class]}>
       <p class="flex flex-wrap items-baseline gap-x-2">
         <span :if={@lead} class="text-(--text-muted)">{@lead} <span class="font-mono">{@short}</span>:</span>
         <%= case @status do %>
@@ -545,6 +584,29 @@ defmodule MergeWeb.MergeRequestComponents do
           <% :none -> %>
             <span class="text-(--text-muted)">Checks haven't run yet</span>
         <% end %>
+        <span :if={@image != :off} id={@id <> "-image"} class="contents">
+          <%= case @image do %>
+            <% %{ok: true} = r -> %>
+              <span class="font-medium text-(--ok-text)">✓ Image build passed</span>
+              <span class="text-xs text-(--text-faint)">{took(r)}</span>
+            <% %{ok: false} -> %>
+              <span class="font-medium text-(--bad-text)">✗ Image build failed</span>
+            <% {:running, at} -> %>
+              <span class="font-medium text-(--warn-text)">● Image build running</span>
+              <span class="text-xs text-(--text-faint)">started {ago(at)}</span>
+            <% {:queued, _} -> %>
+              <span class="font-medium text-(--warn-text)">Image build queued</span>
+            <% :not_needed -> %>
+              <span
+                class="text-(--text-muted)"
+                title="The tip changes nothing GitHub's Docker workflow watches"
+              >
+                Image build not needed
+              </span>
+            <% :none -> %>
+              <span class="text-(--text-muted)">Image build hasn't run yet</span>
+          <% end %>
+        </span>
         <.link
           :if={@status != :none}
           navigate={"/checks/" <> @sha}
@@ -557,6 +619,10 @@ defmodule MergeWeb.MergeRequestComponents do
         :if={match?(%{ok: false}, @status)}
         class="mt-2 max-h-48 overflow-auto rounded-md bg-(--bad-bg) p-2 text-xs text-(--text)"
       >{last_lines(@status.log, 15)}</pre>
+      <pre
+        :if={match?(%{ok: false}, @image)}
+        class="mt-2 max-h-48 overflow-auto rounded-md bg-(--bad-bg) p-2 text-xs text-(--text)"
+      >{last_lines(@image.log, 15)}</pre>
     </div>
     """
   end

@@ -40,7 +40,8 @@ No GitHub and no database: each merge request is a process, gone when the server
 `mr watch` prints one line per event, as it happens, and never returns: `opened`, `comment`,
 `approved`, `needs-work`, `addressed`, `new-commits`, `conflicts`, `merges-cleanly`, `rewritten`,
 `branch-gone`, `merged`, `on-origin`, `closed`, and for `main`: `main-tip`, `checks-running`,
-`checks-passed`, `checks-failed`, `pushed`, `push-failed`. The lines are kept in
+`checks-passed`, `checks-failed`, `image-running`, `image-passed`, `image-failed`, `pushed`,
+`push-failed`. The lines are kept in
 `~/.merge/events.log`; `--since` (a time, or an age like `30m`) replays them. It reconnects
 after a server restart and carries on from the last line it printed. MCP: `watch_events`.
 
@@ -88,6 +89,16 @@ The home page shows where the repo's local `main` stands against `origin/main`
 (`serve --repo PATH`, else the first merge request's repo): one quiet line when
 they match, else the commits on either side, each with the **diff** up to it and
 its own **Push** (**Push All** on the tip), or **Pull**.
+Before the tap, the box says whether the push will land: every minute and on the
+home page load, with commits ahead, the server runs `git push --dry-run origin main`
+and shows "Push will land", or "Push will be refused: GitHub has N commits you
+don't. Pull first." (git isn't asked then), or the dry run's own message when git
+refuses for another reason; each Push confirmation says the same. Beside "Pull
+first." is its **Pull**: main and GitHub's have diverged there, so it merges GitHub's
+main into main with a merge commit ("Merge GitHub's main into main", never a rebase;
+a conflict changes nothing and names the files), a new tip that runs through the
+checks like any other, and the line turns into "Push will land". The Pull under
+"GitHub is N commits ahead" stays fast-forward only.
 A push is checked by fetching again; a success shows for a few seconds, a failure
 stays until the next push. A commit's Push moves GitHub's main to that commit
 and the ones above stay ahead. Every
@@ -104,12 +115,23 @@ time; a tip that's already superseded is skipped. For Day of Plenty:
     --check 'MIX_ENV=test MIX_TEST_PARTITION=_merge_checks; export MIX_ENV MIX_TEST_PARTITION;
              mix deps.get && mix compile --warnings-as-errors && mix check'
 
+`serve --check-image CMD` mirrors GitHub's Docker workflow, which `mix check`
+doesn't: it runs after the first check on the same tip, in the same checkout, one
+at a time and under `nice -n 19`, but only when the tip changes a path that
+workflow watches since `origin/main` (the `pull_request.paths` of the repo's
+`.github/workflows/docker.yml`, read at the tip; `*` within a directory, `**`
+across). A tip superseded by the time its first check ends skips it. For Day of
+Plenty:
+
+    --check-image 'docker build --quiet -t dop-merge-check .'
+
 The home card shows "Checks passed / running / failed on <sha>" (with the failing
-output), `/checks/<sha>` has the whole log, and a merged merge request shows
+output) and beside it "Image build passed / running / failed / not needed";
+`/checks/<sha>` has both whole logs, and a merged merge request shows
 "main at <sha>: checks passed". A commit's **Push** (each commit ahead was a tip
 once, unless it was superseded before its turn) says in its confirmation whether
-that commit's checks passed, and asks to push anyway when they haven't. Results
-are kept per commit on disk.
+that commit's checks and image build passed, and asks to push anyway when they
+haven't. Results are kept per commit on disk.
 
 The flow for a coordinator: merge into local main (all at once when there are
 several), wait for "Checks passed" on the tip, then Push All from the home page.

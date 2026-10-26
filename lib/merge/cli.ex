@@ -9,7 +9,7 @@ defmodule Merge.CLI do
   """
 
   @usage """
-  merge serve [--port N] [--repo PATH] [--check CMD]
+  merge serve [--port N] [--repo PATH] [--check CMD] [--check-image CMD]
   merge mr open <branch> [--repo PATH] [--base BRANCH] [--title T] [--body B | --body-file F] [--groups F] [--as NAME]
   merge mr wait <branch> [--as NAME]      returns on each comment or decision; run it again to keep listening
   merge mr addressed <branch> <commit> [--note "..."] [--groups F] [--as NAME]

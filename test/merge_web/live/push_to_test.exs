@@ -7,7 +7,7 @@ defmodule MergeWeb.PushToTest do
   alias Merge.{Drift, GitRepo}
 
   setup do
-    {repo, _origin} = GitRepo.with_origin()
+    {repo, origin} = GitRepo.with_origin()
     was = Application.get_env(:merge, :repo)
     Application.put_env(:merge, :repo, repo)
     Drift.put_current(nil)
@@ -21,7 +21,7 @@ defmodule MergeWeb.PushToTest do
 
     one = GitRepo.commit!(repo, %{"ONE.md" => "1\n"}, "One")
     two = GitRepo.commit!(repo, %{"TWO.md" => "2\n"}, "Two")
-    %{repo: repo, one: String.slice(one, 0, 7), two: String.slice(two, 0, 7)}
+    %{repo: repo, origin: origin, one: String.slice(one, 0, 7), two: String.slice(two, 0, 7)}
   end
 
   test "every commit ahead has a Push that leaves the ones above ahead, the tip's is Push All",
@@ -67,5 +67,44 @@ defmodule MergeWeb.PushToTest do
     {:ok, whole, _html} = live(conn, ~p"/drift")
     assert has_element?(whole, "#diff", "TWO.md")
     refute has_element?(whole, "#drift-commit-#{two}.opacity-50")
+  end
+
+  test "says before the tap whether the push will land, and the confirmation says it too", %{
+    conn: conn,
+    repo: repo,
+    origin: origin,
+    two: two
+  } do
+    Drift.refresh(repo)
+    {:ok, view, _html} = live(conn, ~p"/")
+    assert has_element?(view, "#push-landing", "Push will land")
+    assert view |> element("#push-to-#{two}") |> render() =~ "Push will land."
+
+    # GitHub moves on without us.
+    other = Path.join(Path.dirname(origin), "other")
+    {_, 0} = System.cmd("git", ["clone", "-q", origin, other], stderr_to_stdout: true)
+    GitRepo.commit!(other, %{"OTHER.md" => "x\n"}, "Elsewhere")
+    GitRepo.git!(other, ["push", "-q", "origin", "main"])
+    Merge.Git.fetch(repo)
+    GitRepo.git!(repo, ["config", "user.name", "Test"])
+    GitRepo.git!(repo, ["config", "user.email", "test@example.com"])
+    Drift.refresh(repo)
+
+    assert has_element?(
+             view,
+             "#push-landing",
+             "Push will be refused: GitHub has 1 commit you don't. Pull first."
+           )
+
+    assert view |> element("#push-to-#{two}") |> render() =~ "Push will be refused"
+
+    # One tap: GitHub's main comes in with a merge commit and the dry run reads again.
+    view |> element("#landing-pull-button") |> render_click()
+    render_async(view)
+    assert has_element?(view, "#push-landing", "Push will land")
+    refute has_element?(view, "#landing-pull-button")
+
+    assert %{ahead: [%{subject: "Merge GitHub's main into main"} | _], behind: []} =
+             Drift.read(repo)
   end
 end

@@ -4,8 +4,11 @@ defmodule Merge.Drift do
   each has that the other hasn't. The repo is `merge serve --repo`, else the
   first merge request's. `Merge.Watcher` fetches and broadcasts it on
   `topic/0` as `{:drift, drift}`, with main's latest CI runs from `gh`;
+  Each refresh with commits ahead also asks git whether a push would land
+  (`git push --dry-run`), as `:landing` (`landing/2`).
   `push/0` and `pull/0` close the gap, `push/2` with a commit closes part of
-  it. A push is judged by fetching again afterwards, not by git's exit code. A failure stays on the home page until
+  it, and `merge_github/0` brings GitHub's commits in when the two have
+  diverged. A push is judged by fetching again afterwards, not by git's exit code. A failure stays on the home page until
   the next push; a success shows for a few seconds.
   """
 
@@ -134,12 +137,48 @@ defmodule Merge.Drift do
     end
   end
 
+  @doc """
+  Whether a push of main will land: `:lands`; `{:behind, n}` when GitHub has n
+  commits main hasn't (git would refuse, so it isn't asked); else
+  `{:refused, message}` with git's own words from the dry run (`{:ok | :error, output}`).
+  """
+  def landing([_ | _] = behind, _dry_run), do: {:behind, length(behind)}
+  def landing([], {:ok, _output}), do: :lands
+
+  def landing([], {:error, output}) do
+    message =
+      output
+      |> String.split("\n", trim: true)
+      |> Enum.reject(&String.starts_with?(&1, ["hint:", "To "]))
+      |> Enum.map_join("\n", &String.trim/1)
+
+    {:refused, if(message == "", do: "git refused the dry run.", else: message)}
+  end
+
+  # Asked only when there is something to push; nil otherwise.
+  defp will_land(%{ahead: []}), do: nil
+  defp will_land(%{behind: [_ | _] = behind}), do: landing(behind, nil)
+  defp will_land(%{repo: repo, behind: []}), do: landing([], Git.push_dry_run(repo, "main"))
+
   @doc "Moves main to GitHub's, fast-forward only."
   def pull(repo \\ repo()), do: after_git(repo, Git.pull(repo, "main"))
 
+  @doc """
+  When main and GitHub's have diverged: fetches, then merges GitHub's main into
+  main with a merge commit, a new tip like any other (never a rebase).
+  `{:ok, sha}`, `{:conflicts, files}` (nothing changed) or `{:error, output}`.
+  """
+  def merge_github(repo \\ repo()) do
+    Git.fetch(repo)
+    after_git(repo, Git.merge_into(repo, "main", "origin/main", "Merge GitHub's main into main"))
+  end
+
   @doc "Reads the drift and main's CI, keeps it as current and broadcasts it."
   def refresh(repo \\ repo()) do
-    drift = with %{} = d <- read(repo), do: Map.put(d, :ci, ci(repo))
+    drift =
+      with %{} = d <- read(repo),
+           do: Map.merge(d, %{ci: ci(repo), landing: will_land(d)})
+
     emit_tip(current(), drift)
     put_current(drift)
     broadcast(drift)
@@ -148,7 +187,10 @@ defmodule Merge.Drift do
 
   # Every change to main is news for the page and for the merge requests.
   defp after_git(repo, result) do
-    refresh(repo)
+    with %{main: main} <- refresh(repo),
+         pid when is_pid(pid) <- Process.whereis(Merge.Checks),
+         do: Merge.Checks.want(repo, main)
+
     Enum.each(MergeRequest.list(), &MergeRequest.check_merged(&1.branch))
     result
   end
