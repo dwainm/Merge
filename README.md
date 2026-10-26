@@ -190,7 +190,9 @@ reloader picks up code changes, but not new libraries).
   (MCP `working`) when the direction changes without a Reject; its note shows under the badge,
   in the other agents' `mr wait` and in `mr list`. `addressed` or opening the branch again hands it
   back. The queue's Next skips In progress.
-- **Reject needs a note or a comment in its round.** Approve doesn't.
+- **Reject needs a note or a comment in its round.** Approve doesn't, and carries no note: the bar at the
+  bottom is three plain actions, Comment and Reject each open their own box, and Approve asks
+  "Approve <title>?" first, so a note typed for one can't go with another.
 - **`addressed` takes any commit reachable from the branch.**
 - **The base is `origin/main` when the repo has it, else `main`**; `--base` reviews a stacked
   branch against its parent.

@@ -93,9 +93,8 @@ defmodule MergeWeb.MergeRequestLiveTest do
     assert {:ok, %{kind: :comment, comments: [%{body: "Why?", line: 2, side: "old"}]}} =
              Task.await(waiter)
 
-    view
-    |> form("#review-form", review: %{body: "Keep hello."})
-    |> render_submit(%{verdict: "reject"})
+    view |> element("#reject-button") |> render_click()
+    view |> form("#reject-form", review: %{body: "Keep hello."}) |> render_submit()
 
     assert {:ok, %{kind: :decision, decision: %{verdict: :needs_work}, comments: []}} =
              MergeRequest.wait(c.branch, "agent", 5_000)
@@ -107,12 +106,91 @@ defmodule MergeWeb.MergeRequestLiveTest do
     assert has_element?(view, "#file-0", "Why?")
   end
 
-  test "rejecting without a word is refused", %{conn: conn} = c do
+  test "the bar has three plain actions and no open box", %{conn: conn} = c do
     {:ok, view, _html} = live(conn, MergeWeb.mr_path(c.branch))
 
-    view |> form("#review-form", review: %{body: ""}) |> render_submit(%{verdict: "reject"})
+    assert has_element?(view, "#review-bar #comment-button")
+    assert has_element?(view, "#review-bar #approve-button")
+    assert has_element?(view, "#review-bar #reject-button")
+    refute has_element?(view, "textarea#review-body")
+  end
 
+  test "Comment opens a box; sending lands it in the round and closes it", %{conn: conn} = c do
+    {:ok, view, _html} = live(conn, MergeWeb.mr_path(c.branch))
+
+    view |> element("#comment-button") |> render_click()
+    assert has_element?(view, "#comment-dialog #review-body")
+
+    view |> form("#comment-form", review: %{body: "Looks close."}) |> render_submit()
+
+    assert {:ok, %{comments: [%{body: "Looks close.", round: 0, path: nil}], decisions: []}} =
+             MergeRequest.get(c.branch)
+
+    refute has_element?(view, "#comment-dialog")
+    assert_push_event(view, "review-sent", %{to: "comment-" <> _})
+  end
+
+  test "closing the comment box sends nothing and keeps the draft", %{conn: conn} = c do
+    {:ok, view, _html} = live(conn, MergeWeb.mr_path(c.branch))
+
+    view |> element("#comment-button") |> render_click()
+    view |> form("#comment-form", review: %{body: "Half a thought"}) |> render_change()
+    view |> render_hook("close_dialog", %{})
+    refute has_element?(view, "#comment-dialog")
+    assert {:ok, %{comments: []}} = MergeRequest.get(c.branch)
+
+    view |> element("#comment-button") |> render_click()
+    assert has_element?(view, "#comment-dialog #review-body", "Half a thought")
+  end
+
+  test "Approve asks first, and an approval carries no note", %{conn: conn} = c do
+    {:ok, view, _html} = live(conn, MergeWeb.mr_path(c.branch))
+
+    # A change request typed into Comment, then a slip onto Approve.
+    view |> element("#comment-button") |> render_click()
+    view |> form("#comment-form", review: %{body: "The experience is wrong"}) |> render_change()
+    view |> render_hook("close_dialog", %{})
+    view |> element("#approve-button") |> render_click()
+
+    assert has_element?(view, "#approve-dialog", "Approve Empty it?")
+    refute has_element?(view, "#approve-dialog textarea")
     assert {:ok, %{decisions: []}} = MergeRequest.get(c.branch)
+
+    view |> element("#approve-cancel") |> render_click()
+    refute has_element?(view, "#approve-dialog")
+    assert {:ok, %{decisions: []}} = MergeRequest.get(c.branch)
+
+    view |> element("#approve-button") |> render_click()
+    view |> element("#approve-confirm") |> render_click()
+
+    assert {:ok, %{status: :approved, decisions: [%{verdict: :approved, body: ""}], comments: []}} =
+             MergeRequest.get(c.branch)
+
+    assert has_element?(view, "#decision-0", "Approved")
+    refute has_element?(view, "#decision-0", "The experience is wrong")
+  end
+
+  test "rejecting without a word is refused, with the message", %{conn: conn} = c do
+    {:ok, view, _html} = live(conn, MergeWeb.mr_path(c.branch))
+
+    view |> element("#reject-button") |> render_click()
+    view |> form("#reject-form", review: %{body: ""}) |> render_submit()
+
+    assert has_element?(view, "#reject-dialog #dialog-error", "Say what needs work.")
+    assert {:ok, %{decisions: []}} = MergeRequest.get(c.branch)
+  end
+
+  test "a comment in the round lets Reject go without a note", %{conn: conn} = c do
+    {:ok, _} = MergeRequest.comment(c.branch, %{body: "Keep hello."})
+    {:ok, view, _html} = live(conn, MergeWeb.mr_path(c.branch))
+
+    view |> element("#reject-button") |> render_click()
+    view |> form("#reject-form", review: %{body: ""}) |> render_submit()
+
+    assert {:ok, %{status: :in_progress, decisions: [%{verdict: :needs_work, body: ""}]}} =
+             MergeRequest.get(c.branch)
+
+    refute has_element?(view, "#reject-dialog")
   end
 
   test "after a review, the page shows what is new when a commit is addressed",

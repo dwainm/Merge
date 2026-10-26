@@ -49,7 +49,8 @@ defmodule MergeWeb.QueueTest do
     Queue.add(two)
     {:ok, view, _html} = live(conn, MergeWeb.mr_path(one))
 
-    view |> form("#review-form", review: %{body: ""}) |> render_submit(%{verdict: "approve"})
+    view |> element("#approve-button") |> render_click()
+    view |> element("#approve-confirm") |> render_click()
 
     assert has_element?(view, "#queue-tab-#{one}.queue-leaving", "Approved")
     assert has_element?(view, "#queue-tab-#{two}", "Next")

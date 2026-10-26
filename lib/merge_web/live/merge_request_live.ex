@@ -34,7 +34,8 @@ defmodule MergeWeb.MergeRequestLive do
      socket
      |> assign(branch: branch, mr: mr, picked: nil, page_title: (mr && mr.title) || branch)
      |> assign(tree: mr && Servers.tree_for(mr, Servers.read()))
-     |> assign(line_form: blank_form(:line), review_form: blank_form(:review))}
+     |> assign(line_form: blank_form(:line), review_form: blank_form(:review))
+     |> assign(dialog: nil, dialog_error: nil)}
   end
 
   @impl true
@@ -88,41 +89,61 @@ defmodule MergeWeb.MergeRequestLive do
     end
   end
 
-  # The review bar: Comment posts the text; Approve and Reject decide, with it as the note.
-  def handle_event("send", %{"review" => %{"body" => body}} = params, socket) do
-    result =
-      case params["verdict"] do
-        "approve" -> MergeRequest.decide(socket.assigns.branch, :approved, body)
-        "reject" -> MergeRequest.decide(socket.assigns.branch, :needs_work, body)
-        _ -> MergeRequest.comment(socket.assigns.branch, %{body: body})
-      end
-
-    case result do
-      {:ok, added} ->
-        flash =
-          case params["verdict"] do
-            "approve" -> "Approved."
-            "reject" -> "Sent back."
-            _ -> "Commented."
-          end
-
-        # Reloaded here so the new entry is on the page when the event lands.
-        {:ok, mr} = MergeRequest.get(socket.assigns.branch)
-
-        {:noreply,
-         socket
-         |> assign(mr: mr, review_form: blank_form(:review))
-         |> load_files()
-         |> push_event("review-sent", %{to: entry_id(added)})
-         |> put_flash(:info, flash)}
-
-      {:error, message} ->
-        {:noreply, put_flash(socket, :error, message)}
-
-      :error ->
-        {:noreply, gone(socket)}
-    end
+  # The review bar: each action opens its own dialog. Comment and Reject have a
+  # box (the draft is kept while they open and close); Approve only asks to be
+  # sure, and carries no note.
+  def handle_event("open_dialog", %{"dialog" => dialog}, socket)
+      when dialog in ~w(comment approve reject) do
+    {:noreply, assign(socket, dialog: String.to_existing_atom(dialog), dialog_error: nil)}
   end
+
+  def handle_event("close_dialog", _params, socket) do
+    {:noreply, assign(socket, dialog: nil, dialog_error: nil)}
+  end
+
+  def handle_event("draft", %{"review" => review}, socket) do
+    {:noreply, assign(socket, review_form: to_form(review, as: :review))}
+  end
+
+  def handle_event("comment", %{"review" => %{"body" => body} = review}, socket) do
+    MergeRequest.comment(socket.assigns.branch, %{body: body})
+    |> reviewed(socket, review, "Commented.")
+  end
+
+  def handle_event("approve", _params, socket) do
+    MergeRequest.decide(socket.assigns.branch, :approved)
+    |> reviewed(socket, socket.assigns.review_form.params, "Approved.")
+  end
+
+  def handle_event("reject", %{"review" => %{"body" => body} = review}, socket) do
+    MergeRequest.decide(socket.assigns.branch, :needs_work, body)
+    |> reviewed(socket, review, "Sent back.")
+  end
+
+  # A refusal stays in the dialog, with the text as it was typed.
+  defp reviewed({:ok, added}, socket, review, flash) do
+    # Reloaded here so the new entry is on the page when the event lands.
+    {:ok, mr} = MergeRequest.get(socket.assigns.branch)
+
+    # An approval leaves a draft alone: it was never sent.
+    review_form =
+      if socket.assigns.dialog == :approve,
+        do: to_form(review, as: :review),
+        else: blank_form(:review)
+
+    {:noreply,
+     socket
+     |> assign(mr: mr, review_form: review_form, dialog: nil, dialog_error: nil)
+     |> load_files()
+     |> push_event("review-sent", %{to: entry_id(added)})
+     |> put_flash(:info, flash)}
+  end
+
+  defp reviewed({:error, message}, socket, review, _flash) do
+    {:noreply, assign(socket, review_form: to_form(review, as: :review), dialog_error: message)}
+  end
+
+  defp reviewed(:error, socket, _review, _flash), do: {:noreply, gone(socket)}
 
   defp gone(socket) do
     socket |> put_flash(:error, "This merge request is gone.") |> push_navigate(to: ~p"/")
@@ -710,62 +731,143 @@ defmodule MergeWeb.MergeRequestLive do
       </div>
 
       <%!-- Always at hand at the bottom; .BottomSpace keeps the page's bottom
-           clear by the bar's height, so the last file can scroll above it. --%>
+           clear by the bar's height, so the last file can scroll above it.
+           Three plain actions, each with its own dialog, so a note typed for
+           one can't go with another. --%>
       <div
         :if={not MergeRequest.done?(@mr)}
         id="review-bar"
         phx-hook=".BottomSpace"
-        class="fixed inset-x-0 bottom-0 z-40 border-t border-(--border) bg-(--surface)/95 backdrop-blur"
+        class="fixed inset-x-0 bottom-0 z-40 border-t border-(--border) bg-(--surface)/95 pb-[env(safe-area-inset-bottom)] backdrop-blur"
       >
+        <div
+          id="review-actions"
+          phx-hook=".ReviewSent"
+          class="mx-auto flex max-w-7xl items-center gap-2 px-4 py-2 sm:justify-end lg:px-6"
+        >
+          <span
+            :if={String.trim(@review_form[:body].value || "") != ""}
+            id="review-draft"
+            class="mr-auto hidden text-xs text-(--text-muted) sm:inline"
+          >
+            Draft kept
+          </span>
+          <button
+            id="comment-button"
+            type="button"
+            phx-click="open_dialog"
+            phx-value-dialog="comment"
+            class="flex-1 rounded-md bg-(--surface) px-3 py-2.5 text-sm text-(--text) ring-1 ring-(--border) transition hover:bg-(--surface-2) active:scale-[0.98] sm:flex-none sm:py-2"
+          >
+            Comment
+          </button>
+          <button
+            id="approve-button"
+            type="button"
+            phx-click="open_dialog"
+            phx-value-dialog="approve"
+            class="flex-1 rounded-md bg-(--ok-solid) px-4 py-2.5 text-sm font-medium text-white transition hover:opacity-90 active:scale-[0.98] sm:flex-none sm:py-2"
+          >
+            Approve
+          </button>
+          <button
+            id="reject-button"
+            type="button"
+            phx-click="open_dialog"
+            phx-value-dialog="reject"
+            class="flex-1 rounded-md bg-(--surface) px-4 py-2.5 text-sm font-medium text-(--bad-text) ring-1 ring-(--bad-border) transition hover:bg-(--bad-bg) active:scale-[0.98] sm:flex-none sm:py-2"
+          >
+            Reject
+          </button>
+        </div>
+      </div>
+
+      <.review_dialog :if={@dialog == :comment} id="comment-dialog" title="Comment">
         <.form
           for={@review_form}
-          id="review-form"
-          phx-submit="send"
-          phx-hook=".ReviewSent"
-          class="mx-auto flex max-w-7xl flex-col gap-2 px-4 py-2 sm:flex-row sm:items-end lg:px-6"
+          id="comment-form"
+          phx-change="draft"
+          phx-submit="comment"
+          class="space-y-3"
         >
-          <textarea
-            name={@review_form[:body].name}
-            id="review-body"
-            rows="2"
-            placeholder="A comment, or a note with your decision (needed to reject)"
-            class="min-w-0 flex-1 resize-y rounded-md border border-(--border) bg-(--surface) px-2 py-1.5 text-base focus:border-(--link) focus:outline-none sm:text-sm"
-          >{@review_form[:body].value}</textarea>
-          <div class="flex gap-2">
+          <.review_box form={@review_form} placeholder="A comment on the whole merge request" />
+          <p :if={@dialog_error} id="dialog-error" class="text-sm text-(--bad-text)">
+            {@dialog_error}
+          </p>
+          <div class="flex gap-2 sm:justify-end">
             <button
-              id="comment-button"
-              name="verdict"
-              value="comment"
-              class="flex-1 rounded-md bg-(--surface) px-3 py-2 text-sm text-(--text) ring-1 ring-(--border) hover:bg-(--surface-2) sm:flex-none"
+              id="comment-send"
+              class="flex-1 rounded-md bg-(--btn-bg) px-4 py-2.5 text-sm font-medium text-(--btn-text) transition hover:opacity-90 active:scale-[0.98] sm:flex-none sm:py-2"
             >
-              Comment
-            </button>
-            <button
-              id="approve-button"
-              name="verdict"
-              value="approve"
-              class="flex-1 rounded-md bg-(--ok-solid) px-4 py-2 text-sm font-medium text-white hover:opacity-90 sm:flex-none"
-            >
-              Approve
-            </button>
-            <button
-              id="reject-button"
-              name="verdict"
-              value="reject"
-              class="flex-1 rounded-md bg-(--surface) px-4 py-2 text-sm font-medium text-(--bad-text) ring-1 ring-(--bad-border) hover:bg-(--bad-bg) sm:flex-none"
-            >
-              Reject
+              Send
             </button>
           </div>
         </.form>
-      </div>
+      </.review_dialog>
+
+      <.review_dialog :if={@dialog == :approve} id="approve-dialog" title={"Approve #{@mr.title}?"}>
+        <p class="text-sm text-(--text-muted)">
+          The author is told it is approved. An approval carries no note; a comment goes with Comment.
+        </p>
+        <div class="mt-4 flex gap-2 sm:justify-end">
+          <button
+            id="approve-cancel"
+            type="button"
+            phx-click="close_dialog"
+            class="flex-1 rounded-md bg-(--surface) px-4 py-2.5 text-sm text-(--text) ring-1 ring-(--border) transition hover:bg-(--surface-2) active:scale-[0.98] sm:flex-none sm:py-2"
+          >
+            Cancel
+          </button>
+          <button
+            id="approve-confirm"
+            type="button"
+            phx-click="approve"
+            phx-disable-with="Approving…"
+            class="flex-1 rounded-md bg-(--ok-solid) px-4 py-2.5 text-sm font-medium text-white transition hover:opacity-90 active:scale-[0.98] sm:flex-none sm:py-2"
+          >
+            Approve
+          </button>
+        </div>
+      </.review_dialog>
+
+      <.review_dialog :if={@dialog == :reject} id="reject-dialog" title="Send it back">
+        <.form
+          for={@review_form}
+          id="reject-form"
+          phx-change="draft"
+          phx-submit="reject"
+          class="space-y-3"
+        >
+          <.review_box
+            form={@review_form}
+            placeholder="What needs work (it can be left to this round's comments)"
+          />
+          <p :if={@dialog_error} id="dialog-error" class="text-sm text-(--bad-text)">
+            {@dialog_error}
+          </p>
+          <div class="flex gap-2 sm:justify-end">
+            <button
+              id="reject-cancel"
+              type="button"
+              phx-click="close_dialog"
+              class="flex-1 rounded-md bg-(--surface) px-4 py-2.5 text-sm text-(--text) ring-1 ring-(--border) transition hover:bg-(--surface-2) active:scale-[0.98] sm:flex-none sm:py-2"
+            >
+              Cancel
+            </button>
+            <button
+              id="reject-send"
+              class="flex-1 rounded-md bg-(--bad-text) px-4 py-2.5 text-sm font-medium text-white transition hover:opacity-90 active:scale-[0.98] sm:flex-none sm:py-2"
+            >
+              Send back
+            </button>
+          </div>
+        </.form>
+      </.review_dialog>
       <script :type={Phoenix.LiveView.ColocatedHook} name=".ReviewSent">
-        // Once a comment or decision is in, empty the box (the server's value
-        // was empty already, so no diff clears it) and show what was added.
+        // Once a comment or decision is in, show what was added.
         export default {
           mounted() {
             this.handleEvent("review-sent", ({to}) => {
-              this.el.querySelector("textarea").value = ""
               document.getElementById(to)?.scrollIntoView({behavior: "smooth", block: "center"})
             })
           }
@@ -787,6 +889,78 @@ defmodule MergeWeb.MergeRequestLive do
         }
       </script>
     </Layouts.app>
+    """
+  end
+
+  # A dialog over the page: a sheet from the bottom on a phone, centred on a
+  # wider screen. Escape, ✕ or a tap beside it closes it without sending.
+  attr :id, :string, required: true
+  attr :title, :string, required: true
+  slot :inner_block, required: true
+
+  defp review_dialog(assigns) do
+    ~H"""
+    <dialog
+      id={@id}
+      phx-hook=".ReviewDialog"
+      phx-mounted={JS.ignore_attributes("open")}
+      aria-labelledby={@id <> "-title"}
+      class="review-dialog m-0 mt-auto w-full max-w-none rounded-t-2xl bg-(--surface) p-0 text-(--text) shadow-2xl sm:m-auto sm:max-w-lg sm:rounded-xl"
+    >
+      <div class="px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] sm:p-5">
+        <div class="mb-3 flex items-start gap-3">
+          <h2 id={@id <> "-title"} class="min-w-0 flex-1 text-base font-semibold break-words">
+            {@title}
+          </h2>
+          <button
+            type="button"
+            phx-click="close_dialog"
+            aria-label="Close"
+            class="-mt-1 -mr-2 rounded-md p-2 text-(--text-muted) transition hover:bg-(--surface-2) hover:text-(--text)"
+          >
+            <.icon name="hero-x-mark" class="size-5" />
+          </button>
+        </div>
+        {render_slot(@inner_block)}
+      </div>
+      <script :type={Phoenix.LiveView.ColocatedHook} name=".ReviewDialog">
+        // Opens as a modal (so the page behind can't be tapped). Escape and a tap
+        // on the backdrop close it here at once, and tell the server.
+        export default {
+          mounted() {
+            this.el.showModal()
+            this.el.addEventListener("cancel", e => {
+              e.preventDefault()
+              this.dismiss()
+            })
+            this.el.addEventListener("click", e => {
+              if (e.target === this.el) this.dismiss()
+            })
+          },
+          dismiss() {
+            this.el.close()
+            this.pushEvent("close_dialog", {})
+          }
+        }
+      </script>
+    </dialog>
+    """
+  end
+
+  attr :form, :map, required: true
+  attr :placeholder, :string, required: true
+
+  defp review_box(assigns) do
+    ~H"""
+    <textarea
+      name={@form[:body].name}
+      id="review-body"
+      rows="5"
+      phx-debounce="300"
+      autofocus
+      placeholder={@placeholder}
+      class="block w-full resize-y rounded-md border border-(--border) bg-(--surface) px-3 py-2 text-base focus:border-(--link) focus:outline-none sm:text-sm"
+    >{@form[:body].value}</textarea>
     """
   end
 
