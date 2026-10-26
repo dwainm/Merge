@@ -397,7 +397,13 @@ defmodule MergeWeb.HomeLive do
           Pushed {count(@result.commits, "commit")}. GitHub main is now <span class="font-mono">{String.slice(@result.origin, 0, 7)}</span>.
         </p>
       <% else %>
-        <p class="font-semibold">The push failed: nothing was pushed.</p>
+        <%!-- git's own answer decides the first line: a ref update is never "nothing". --%>
+        <p class="font-semibold">
+          {if @result[:pushed],
+            do:
+              "The push went, but after a fetch GitHub's main doesn't have #{String.slice(@result.tip, 0, 7)}.",
+            else: "The push failed: nothing was pushed."}
+        </p>
         <pre class="mt-2 overflow-x-auto whitespace-pre-wrap text-xs">{@result.output}</pre>
       <% end %>
       <ol :if={@result.ok} class="mt-2 space-y-1">

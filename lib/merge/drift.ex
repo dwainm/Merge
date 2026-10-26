@@ -8,8 +8,9 @@ defmodule Merge.Drift do
   (`git push --dry-run`), as `:landing` (`landing/2`).
   `push/0` and `pull/0` close the gap, `push/2` with a commit closes part of
   it, and `merge_github/0` brings GitHub's commits in when the two have
-  diverged. A push is judged by fetching again afterwards, not by git's exit code. A failure stays on the home page until
-  the next push; a success shows for a few seconds.
+  diverged. A push is judged by git's answer and then by a fetch: GitHub's main
+  must have the commit that went. A failure stays on the home page until the
+  next push; a success shows for a few seconds.
   """
 
   alias Merge.{Events, Git, MergeRequest}
@@ -50,30 +51,41 @@ defmodule Merge.Drift do
   @doc """
   Pushes main to GitHub, or only up to `to` (a sha among the commits ahead:
   GitHub's main moves to it, the rest stays ahead), fetches, and answers what
-  GitHub has now: `%{ok, commits, to, origin, identical, left, output, github,
-  at}`. `commits` are the ones that were to go; `ok` when GitHub has every one
-  of them; `left` the commits still ahead afterwards. Kept as the last push.
+  GitHub has now: `%{ok, pushed, commits, to, tip, origin, identical, left,
+  output, github, at}`. `tip` is the commit that went: `to`, or main's tip as
+  it was before the push, so main moving on meanwhile changes nothing.
+  `commits` are the ones GitHub lacked up to it; `pushed` is git's own answer;
+  `ok` when, after the fetch, origin/main has `tip`; `left` the commits still
+  ahead afterwards. Never judged off a fresh read of what's ahead, which lists
+  by date and so can hold commits that were never meant to go. Kept as the
+  last push.
   """
   def push(repo \\ repo(), to \\ "main") do
-    before = read(repo)
-    ahead = (before && before.ahead) || []
-    commits = if to == "main", do: ahead, else: Enum.drop_while(ahead, &(&1.sha != to))
+    tip = pushable(repo, to)
 
-    {_, output} =
-      cond do
-        commits == [] and to != "main" -> {:error, "#{Events.short(to)} is not ahead of GitHub."}
-        to == "main" -> Git.push(repo, "main")
-        true -> Git.push(repo, "main", to)
+    commits =
+      with sha when is_binary(sha) <- tip,
+           {:ok, commits} <- Git.commits(repo, "origin/main", sha) do
+        commits
+      else
+        _ -> []
+      end
+
+    {pushed, output} =
+      case tip do
+        nil -> {false, "#{Events.short(to)} is not ahead of GitHub."}
+        sha -> git_answer(Git.push(repo, "main", sha))
       end
 
     Git.fetch(repo)
     now = read(repo)
-    landed = Enum.filter(commits, &Git.ancestor?(repo, &1.sha, "origin/main"))
 
     result = %{
-      ok: commits != [] and length(landed) == length(commits),
+      ok: pushed and Git.ancestor?(repo, tip, "origin/main"),
+      pushed: pushed,
       commits: commits,
       to: to,
+      tip: tip,
       origin: now && now.origin,
       identical: now != nil and now.main == now.origin,
       left: (now && now.ahead) || [],
@@ -95,6 +107,21 @@ defmodule Merge.Drift do
 
     after_git(repo, result)
   end
+
+  # The sha `to` names ("main" is its tip right now), when it is on main and not on
+  # GitHub yet; nil otherwise.
+  defp pushable(repo, to) do
+    with {:ok, sha} <- Git.rev_parse(repo, to),
+         true <- Git.ancestor?(repo, sha, "main"),
+         false <- Git.ancestor?(repo, sha, "origin/main") do
+      sha
+    else
+      _ -> nil
+    end
+  end
+
+  defp git_answer({:ok, output}), do: {true, output}
+  defp git_answer({:error, output}), do: {false, output}
 
   # A new tip of main since the last read (none on the first read after a start).
   defp emit_tip(%{main: old}, %{main: new} = drift) when old != new do
