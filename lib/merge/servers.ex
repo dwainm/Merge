@@ -78,6 +78,12 @@ defmodule Merge.Servers do
       {:ok, _} -> {:up, nil}
       {:error, _} -> {:not_answering, "not answering"}
     end
+  rescue
+    # Req raises when its connection pool is exhausted; that server is not
+    # answering us either way, and the page must still render.
+    _ -> {:not_answering, "not answering"}
+  catch
+    :exit, _ -> {:not_answering, "not answering"}
   end
 
   # Phoenix's error pages read "CompileError at GET /"; the error is the reason.
@@ -102,15 +108,20 @@ defmodule Merge.Servers do
 
   # Every listening tree at once, so one hung server costs 5 seconds, not 5 each.
   defp probe_all(repos, req) do
+    trees = repos |> Enum.flat_map(& &1.trees) |> Enum.filter(& &1.url)
+
     status =
-      repos
-      |> Enum.flat_map(& &1.trees)
-      |> Enum.filter(& &1.url)
-      |> Task.async_stream(&{&1.path, probe(&1.url, req)},
-        timeout: :infinity,
+      trees
+      |> Task.async_stream(&probe(&1.url, req),
+        timeout: 10_000,
+        on_timeout: :kill_task,
         max_concurrency: 16
       )
-      |> Map.new(fn {:ok, result} -> result end)
+      |> Enum.zip(trees)
+      |> Map.new(fn
+        {{:ok, result}, tree} -> {tree.path, result}
+        {{:exit, _}, tree} -> {tree.path, {:not_answering, "not answering"}}
+      end)
 
     Enum.map(repos, fn repo ->
       trees =
