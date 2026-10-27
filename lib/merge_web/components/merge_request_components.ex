@@ -322,19 +322,30 @@ defmodule MergeWeb.MergeRequestComponents do
   end
 
   attr :tree, :map, required: true, doc: "a tree from Merge.Servers"
+  attr :run, :map, default: nil, doc: "the tree's last Merge.DevScript run"
   attr :id, :string, default: nil
   attr :class, :string, default: nil
 
-  @doc "A tree's server: a green dot and its URL to tap, or a grey dot and \"no server\"."
+  @doc """
+  A tree's server: its dot, and its URL to tap or "no server". The dot is green
+  when the server answers, red when its pages error or it doesn't answer (the
+  reason on hover), grey with none, and pulses while a Restart, Reseed or Turn
+  off runs. Tapping the dot opens the server sheet.
+  """
   def server(assigns) do
     ~H"""
     <span id={@id} class={["inline-flex min-w-0 items-center gap-1.5", @class]}>
-      <span
-        class={["text-[10px]", (@tree.url && "text-(--ok-text)") || "text-(--text-faint)"]}
-        aria-hidden="true"
+      <button
+        type="button"
+        id={"dot-" <> dom_id(@tree.path)}
+        phx-click="server_open"
+        phx-value-path={@tree.path}
+        title={status_text(@tree)}
+        aria-label={"#{@tree.name}'s server: #{status_text(@tree)}"}
+        class="-m-1.5 shrink-0 rounded-full p-1.5 transition hover:bg-(--surface-2) active:scale-90"
       >
-        ●
-      </span>
+        <.dot status={@tree.status} running={running?(@run)} />
+      </button>
       <a
         :if={@tree.url}
         href={@tree.url}
@@ -348,6 +359,219 @@ defmodule MergeWeb.MergeRequestComponents do
     </span>
     """
   end
+
+  attr :status, :atom, required: true
+  attr :running, :boolean, default: false
+  attr :class, :string, default: "size-2.5"
+
+  defp dot(assigns) do
+    ~H"""
+    <span
+      aria-hidden="true"
+      class={[
+        "block rounded-full",
+        @class,
+        case @status do
+          :up -> "bg-(--ok-solid)"
+          :off -> "bg-(--text-faint) opacity-50"
+          _ -> "bg-(--bad-text)"
+        end,
+        @running && "animate-pulse ring-4 ring-(--info-bg)"
+      ]}
+    ></span>
+    """
+  end
+
+  defp running?(run), do: match?(%{state: :running}, run)
+
+  @doc "What the dot says: Up, Error: CompileError, Not answering, No server."
+  def status_text(%{status: :up}), do: "Up"
+  def status_text(%{status: :error, reason: reason}), do: "Error: #{reason}"
+  def status_text(%{status: :not_answering}), do: "Not answering"
+  def status_text(_), do: "No server"
+
+  defp dom_id(path), do: path |> String.replace(~r/[^A-Za-z0-9_-]+/, "-") |> String.trim("-")
+
+  attr :tree, :map, required: true, doc: "the open sheet's tree (ServerSheetHook)"
+  attr :log, :list, default: nil
+  attr :runs, :map, required: true
+  attr :error, :string, default: nil
+
+  @doc """
+  The sheet a dot opens: the tree, its status and reason, the last lines of its
+  log, and Restart, Reseed, Turn off. Each asks once, then runs the tree's
+  `bin/dev`; the sheet says how it went.
+  """
+  def server_sheet(assigns) do
+    assigns =
+      assigns
+      |> assign(:run, assigns.runs[assigns.tree.path])
+      |> assign(:actions?, assigns.tree.dev? and assigns.tree.status != :off)
+
+    ~H"""
+    <dialog
+      id="server-sheet"
+      phx-hook=".ServerSheet"
+      phx-mounted={JS.ignore_attributes("open")}
+      aria-labelledby="server-sheet-title"
+      class="review-dialog m-0 mt-auto w-full max-w-none rounded-t-2xl bg-(--surface) p-0 text-(--text) shadow-2xl sm:m-auto sm:max-w-xl sm:rounded-xl"
+    >
+      <div class="px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] sm:p-5">
+        <div class="mb-3 flex items-start gap-3">
+          <h2 id="server-sheet-title" class="min-w-0 flex-1 text-base font-semibold break-words">
+            {@tree.name}'s server
+          </h2>
+          <button
+            type="button"
+            phx-click="server_close"
+            aria-label="Close"
+            class="-mt-1 -mr-2 rounded-md p-2 text-(--text-muted) transition hover:bg-(--surface-2) hover:text-(--text)"
+          >
+            <.icon name="hero-x-mark" class="size-5" />
+          </button>
+        </div>
+
+        <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
+          <dt class="text-(--text-muted)">Branch</dt>
+          <dd class="min-w-0 truncate font-mono">{@tree.branch || "(detached)"}</dd>
+          <dt class="text-(--text-muted)">URL</dt>
+          <dd class="min-w-0 truncate">
+            <a
+              :if={@tree.url}
+              href={@tree.url}
+              target="_blank"
+              rel="noopener"
+              class="text-(--link) hover:underline"
+            >
+              {host(@tree.url)}
+            </a>
+            <span :if={!@tree.url} class="text-(--text-faint)">none</span>
+          </dd>
+          <dt class="text-(--text-muted)">Status</dt>
+          <dd id="server-sheet-status" class="flex min-w-0 items-center gap-2">
+            <.dot status={@tree.status} running={running?(@run)} class="size-2.5 shrink-0" />
+            <span class={[
+              "min-w-0 break-words",
+              @tree.status in [:error, :not_answering] && "text-(--bad-text)"
+            ]}>
+              {status_text(@tree)}
+            </span>
+          </dd>
+        </dl>
+
+        <div
+          :if={@run}
+          id="server-sheet-run"
+          class={[
+            "mt-4 rounded-lg border px-3 py-2 text-sm transition-colors",
+            case @run.state do
+              :running -> "border-(--info-border) bg-(--info-bg) text-(--info-text)"
+              :ok -> "border-(--ok-border) bg-(--ok-bg) text-(--ok-text)"
+              :failed -> "border-(--bad-border) bg-(--bad-bg) text-(--bad-text)"
+            end
+          ]}
+        >
+          <p class="flex items-center gap-2">
+            <.icon :if={@run.state == :running} name="hero-arrow-path" class="size-4 animate-spin" />
+            <span>{run_text(@run)}</span>
+          </p>
+          <%!-- column-reverse opens it scrolled to the last line --%>
+          <div
+            :if={@run.output != []}
+            class="mt-2 flex max-h-40 flex-col-reverse overflow-auto rounded bg-(--surface) p-2"
+          >
+            <pre
+              id="server-sheet-output"
+              class="font-mono text-[11px] leading-snug whitespace-pre-wrap break-all text-(--text-2)"
+            >{Enum.join(@run.output, "\n")}</pre>
+          </div>
+        </div>
+
+        <div :if={@log} class="mt-4">
+          <h3 class="mb-1 text-xs text-(--text-muted)">
+            Its log, the last {length(@log)} lines
+          </h3>
+          <div class="flex max-h-56 flex-col-reverse overflow-auto rounded-lg border border-(--border) bg-(--bg) p-2">
+            <pre
+              id="server-sheet-log"
+              class="font-mono text-[11px] leading-snug whitespace-pre-wrap break-all text-(--text-2)"
+            >{Enum.join(@log, "\n")}</pre>
+          </div>
+        </div>
+
+        <p :if={@error} id="server-sheet-error" class="mt-3 text-sm text-(--bad-text)">{@error}</p>
+
+        <div id="server-actions" class="mt-4 grid grid-cols-3 gap-2 sm:flex sm:justify-end">
+          <button
+            :for={
+              {action, label, confirm} <- [
+                {"restart", "Restart", "Restart #{@tree.name}'s server?"},
+                {"reseed", "Reseed",
+                 "Reseed #{@tree.name}? Its server stops, its database is dropped and set up again, and the server starts."},
+                {"off", "Turn off", "Turn off #{@tree.name}'s server?"}
+              ]
+            }
+            id={"server-#{action}"}
+            type="button"
+            phx-click="server_run"
+            phx-value-action={action}
+            data-confirm={confirm}
+            disabled={not @actions? or running?(@run)}
+            class={[
+              "rounded-md px-4 py-2.5 text-sm font-medium ring-1 transition active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 disabled:active:scale-100 sm:py-2",
+              if(action == "off",
+                do: "text-(--bad-text) ring-(--bad-border) enabled:hover:bg-(--bad-bg)",
+                else: "text-(--text) ring-(--border) enabled:hover:bg-(--surface-2)"
+              )
+            ]}
+          >
+            {label}
+          </button>
+        </div>
+        <p :if={not @tree.dev?} id="server-no-script" class="mt-2 text-xs text-(--text-muted)">
+          This repo has no bin/dev, so Merge can't restart, reseed or turn off its servers.
+        </p>
+        <p
+          :if={@tree.dev? and @tree.status == :off}
+          id="server-off"
+          class="mt-2 text-xs text-(--text-muted)"
+        >
+          No server is running in this tree; Merge doesn't start one.
+        </p>
+      </div>
+      <script :type={Phoenix.LiveView.ColocatedHook} name=".ServerSheet">
+        // Opens as a modal. Escape and a tap on the backdrop close it here at
+        // once, and tell the server.
+        export default {
+          mounted() {
+            this.el.showModal()
+            this.el.addEventListener("cancel", e => {
+              e.preventDefault()
+              this.dismiss()
+            })
+            this.el.addEventListener("click", e => {
+              if (e.target === this.el) this.dismiss()
+            })
+          },
+          dismiss() {
+            this.el.close()
+            this.pushEvent("server_close", {})
+          }
+        }
+      </script>
+    </dialog>
+    """
+  end
+
+  defp run_text(%{state: :running, action: action, name: name}) do
+    case action do
+      :restart -> "Restarting #{name}'s server…"
+      :reseed -> "Reseeding #{name}: stopping, setting up its database again, starting…"
+      :off -> "Turning off #{name}'s server…"
+    end
+  end
+
+  defp run_text(%{message: message, at: at}), do: "#{message} (#{ago(at)})"
 
   defp host(url), do: url |> String.replace(~r{^https?://}, "") |> String.trim_trailing("/")
 

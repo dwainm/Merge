@@ -13,6 +13,7 @@ defmodule MergeWeb.MergeRequestLive do
 
   # The queue's tabs. A tab dropping out never moves this page.
   on_mount MergeWeb.QueueHook
+  on_mount MergeWeb.ServerSheetHook
 
   @impl true
   def mount(%{"branch" => parts}, _session, socket) do
@@ -300,7 +301,7 @@ defmodule MergeWeb.MergeRequestLive do
           </span>
           <span :if={@tree} id="mr-tree" class="inline-flex min-w-0 items-center gap-1.5">
             in <span class="font-mono">{@tree.name}</span>
-            <.server tree={@tree} />
+            <.server tree={@tree} run={@dev_runs[@tree.path]} />
           </span>
           <span :if={!@tree} id="mr-tree" class="text-(--text-faint)">no tree</span>
         </div>
@@ -888,6 +889,13 @@ defmodule MergeWeb.MergeRequestLive do
           }
         }
       </script>
+      <.server_sheet
+        :if={@server_sheet}
+        tree={@server_sheet}
+        log={@server_log}
+        runs={@dev_runs}
+        error={@server_error}
+      />
     </Layouts.app>
     """
   end
