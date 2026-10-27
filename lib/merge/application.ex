@@ -13,6 +13,7 @@ defmodule Merge.Application do
       {Registry, keys: :unique, name: Merge.Registry},
       {DynamicSupervisor, name: Merge.MergeRequests, strategy: :one_for_one},
       Merge.Checks,
+      Merge.DevScript,
       Merge.Watcher,
       {Merge.MCP, transport: :streamable_http, request_timeout: Merge.MCP.request_timeout()},
       # Start to serve requests, typically the last entry

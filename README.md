@@ -150,7 +150,27 @@ tree (`ss -ltnp`, then `/proc/<pid>/cwd`). A tree with a server shows its
 `localhost:<port>`, as a link to tap; one without shows "no server". A branch
 under review links to its merge request, and each merge request's page says the
 same for the tree its branch is checked out in. Read every minute with the
-rest, and when the home page loads. Read-only: Merge starts and stops nothing.
+rest, and when the home page loads.
+
+**The dot says whether the server answers.** Each round Merge GETs every
+listening tree's URL (5 seconds, no redirects followed): a 2xx, 3xx or 4xx is
+green, a 5xx red with the page's `<title>` as the reason ("CompileError", when
+the code reloader refuses to run after a config change), a timeout, a refusal
+or a tunnel's 502 red with "not answering". No listener is grey. The reason
+shows on hover.
+
+**Tapping the dot opens the server's sheet**: the tree, branch, URL, status and
+reason, the last 20 lines of `/tmp/dop-servers/<tree>.log` when there is one,
+and Restart, Reseed and Turn off. Each asks once, then runs the tree's own
+`bin/dev` from inside the tree: Restart is `bin/dev stop` then `bin/dev start`,
+Reseed is `bin/dev reseed`, Turn off is `bin/dev stop`. While one runs the dot
+pulses and the buttons are off; then Merge waits for the server to answer (up
+to 2 minutes) or to be gone, and the sheet says what happened with the
+command's last lines. A tree without an executable `bin/dev` gets the buttons
+disabled: Merge knows nothing of how a repo runs its server. Merge doesn't start
+a server in a tree that has none. Under the systemd service the command runs in
+a scope of its own (`systemd-run --user --scope`), so a server it starts
+outlives a restart of Merge.
 
 ## MCP
 

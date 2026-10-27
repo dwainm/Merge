@@ -14,6 +14,7 @@ defmodule MergeWeb.HomeLive do
 
   # The queue's tabs; it also follows the merge requests for this page.
   on_mount MergeWeb.QueueHook
+  on_mount MergeWeb.ServerSheetHook
 
   @impl true
   def mount(_params, _session, socket) do
@@ -208,12 +209,19 @@ defmodule MergeWeb.HomeLive do
         queued={MapSet.new(@queue, & &1.branch)}
       />
 
-      <.servers :if={@servers != []} servers={@servers} branches={@branches} />
+      <.servers :if={@servers != []} servers={@servers} branches={@branches} runs={@dev_runs} />
 
       <section :if={@done != []} class="mt-8">
         <h2 class="mb-3 text-sm font-semibold text-(--text-muted)">Merged and closed</h2>
         <.mr_list id="done-merge-requests" merge_requests={@done} pills={@pills} />
       </section>
+      <.server_sheet
+        :if={@server_sheet}
+        tree={@server_sheet}
+        log={@server_log}
+        runs={@dev_runs}
+        error={@server_error}
+      />
     </Layouts.app>
     """
   end
@@ -438,6 +446,7 @@ defmodule MergeWeb.HomeLive do
 
   attr :servers, :list, required: true, doc: "Merge.Servers.read/0"
   attr :branches, :any, required: true, doc: "MapSet of the branches with a merge request"
+  attr :runs, :map, required: true, doc: "Merge.DevScript.runs/0"
 
   # Every tree of each repo, with its server to tap; a branch under review links to it.
   defp servers(assigns) do
@@ -448,7 +457,11 @@ defmodule MergeWeb.HomeLive do
         <h3 class="mb-1 flex items-baseline justify-between gap-3 text-xs">
           <span class="font-medium text-(--text-2)">{repo.name}</span>
           <span class="text-(--text-muted)">
-            {count(Enum.count(repo.trees, & &1.url), "server")} up in {count(repo.trees, "tree")}
+            {count(Enum.count(repo.trees, &(&1.status == :up)), "server")} up<span
+              :if={(down = Enum.count(repo.trees, &(&1.status in [:error, :not_answering]))) > 0}
+              class="text-(--bad-text)"
+            >, {down} with a problem</span>
+            in {count(repo.trees, "tree")}
           </span>
         </h3>
         <ul class="divide-y divide-(--border) overflow-hidden rounded-lg border border-(--border) bg-(--surface)">
@@ -472,7 +485,7 @@ defmodule MergeWeb.HomeLive do
             <span :if={tree.name != tree.branch} class="text-xs text-(--text-muted)">
               {tree.name}
             </span>
-            <.server tree={tree} class="ml-auto" />
+            <.server tree={tree} run={@runs[tree.path]} class="ml-auto" />
           </li>
         </ul>
       </div>
