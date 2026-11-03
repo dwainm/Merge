@@ -955,13 +955,16 @@ defmodule MergeWeb.MergeRequestLive do
   attr :form, :map, required: true
   attr :placeholder, :string, required: true
 
+  # The draft goes to the server when the box loses focus (closing the dialog
+  # does that), not while typing: each update makes the browser walk the
+  # whole diff, which on a phone stalled the keys being typed.
   defp review_box(assigns) do
     ~H"""
     <textarea
       name={@form[:body].name}
       id="review-body"
       rows="5"
-      phx-debounce="300"
+      phx-debounce="blur"
       autofocus
       placeholder={@placeholder}
       class="block w-full resize-y rounded-md border border-(--border) bg-(--surface) px-3 py-2 text-base focus:border-(--link) focus:outline-none sm:text-sm"
