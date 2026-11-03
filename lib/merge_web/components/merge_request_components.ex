@@ -176,7 +176,13 @@ defmodule MergeWeb.MergeRequestComponents do
 
       <p :if={@file.binary?} class="px-3 py-2 text-xs text-(--text-muted)">Binary file</p>
 
-      <div :if={@file.hunks != []} class="overflow-x-auto rounded-b-lg">
+      <%!-- The browser lays out and styles only the files on screen: a long
+           diff is a hundred thousand elements, and laying them all out took
+           seconds on a phone each time anything moved (opening a dialog). --%>
+      <div
+        :if={@file.hunks != []}
+        class="overflow-x-auto rounded-b-lg [content-visibility:auto] [contain-intrinsic-size:auto_600px]"
+      >
         <table class="hl code-diff w-full border-collapse font-mono text-[12px] leading-5">
           <tbody :for={hunk <- @file.hunks}>
             <tr class="diff-hunk">
