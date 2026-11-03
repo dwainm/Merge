@@ -679,55 +679,52 @@ defmodule MergeWeb.MergeRequestLive do
             No changes.
           </p>
 
-          <.diff_group :for={group <- @groups} group={group} headed={length(@groups) > 1}>
-            <.diff_file
-              :for={file <- group.files}
-              file={file}
-              index={file.index}
-              stacked={length(@groups) > 1}
-              quiet={Groups.quiet?(file)}
-              line_comments={@line_comments}
-              picked={@picked}
-              commentable={not MergeRequest.done?(@mr)}
-            >
-              <:comment :let={comment}>
-                <.comment
-                  comment={comment}
-                  addressed={addressed_for(@mr, comment)}
-                  seen_by={if !reply?(comment), do: MergeRequest.seen_by(@mr, comment), else: []}
-                />
-              </:comment>
-              <:comment_form>
-                <.form
-                  for={@line_form}
-                  id="line-comment-form"
-                  phx-submit="line_comment"
-                  class="space-y-2"
-                >
-                  <textarea
-                    name={@line_form[:body].name}
-                    id="line-comment-body"
-                    rows="3"
-                    phx-mounted={JS.focus()}
-                    placeholder="Comment on this line"
-                    class="w-full rounded-md border border-(--border) bg-(--surface) px-2 py-1.5 text-base focus:border-(--link) sm:text-sm focus:outline-none"
-                  >{@line_form[:body].value}</textarea>
-                  <div class="flex gap-2">
-                    <button class="rounded-md bg-(--btn-bg) px-3 py-1.5 text-sm text-(--btn-text) hover:opacity-90">
-                      Comment
-                    </button>
-                    <button
-                      type="button"
-                      phx-click="unpick"
-                      class="rounded-md px-3 py-1.5 text-sm text-(--text-2) hover:bg-(--surface-2)"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </.form>
-              </:comment_form>
-            </.diff_file>
-          </.diff_group>
+          <%!-- A component, so the browser skips the diff when it hasn't changed. --%>
+          <.live_component
+            module={MergeWeb.DiffComponent}
+            id="diff-files"
+            groups={@groups}
+            line_comments={@line_comments}
+            picked={@picked}
+            commentable={not MergeRequest.done?(@mr)}
+          >
+            <:comment :let={comment}>
+              <.comment
+                comment={comment}
+                addressed={addressed_for(@mr, comment)}
+                seen_by={if !reply?(comment), do: MergeRequest.seen_by(@mr, comment), else: []}
+              />
+            </:comment>
+            <:comment_form>
+              <.form
+                for={@line_form}
+                id="line-comment-form"
+                phx-submit="line_comment"
+                class="space-y-2"
+              >
+                <textarea
+                  name={@line_form[:body].name}
+                  id="line-comment-body"
+                  rows="3"
+                  phx-mounted={JS.focus()}
+                  placeholder="Comment on this line"
+                  class="w-full rounded-md border border-(--border) bg-(--surface) px-2 py-1.5 text-base focus:border-(--link) sm:text-sm focus:outline-none"
+                >{@line_form[:body].value}</textarea>
+                <div class="flex gap-2">
+                  <button class="rounded-md bg-(--btn-bg) px-3 py-1.5 text-sm text-(--btn-text) hover:opacity-90">
+                    Comment
+                  </button>
+                  <button
+                    type="button"
+                    phx-click="unpick"
+                    class="rounded-md px-3 py-1.5 text-sm text-(--text-2) hover:bg-(--surface-2)"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </.form>
+            </:comment_form>
+          </.live_component>
         </section>
       </div>
 
