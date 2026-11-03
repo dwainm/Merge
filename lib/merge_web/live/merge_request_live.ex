@@ -731,7 +731,8 @@ defmodule MergeWeb.MergeRequestLive do
       <%!-- Always at hand at the bottom; .BottomSpace keeps the page's bottom
            clear by the bar's height, so the last file can scroll above it.
            Three plain actions, each with its own dialog, so a note typed for
-           one can't go with another. --%>
+           one can't go with another. Once approved only Comment is left: the
+           verdict is on the page. Merged or closed, the bar goes. --%>
       <div
         :if={not MergeRequest.done?(@mr)}
         id="review-bar"
@@ -760,6 +761,7 @@ defmodule MergeWeb.MergeRequestLive do
             Comment
           </button>
           <button
+            :if={@mr.status != :approved}
             id="approve-button"
             type="button"
             phx-click="open_dialog"
@@ -769,6 +771,7 @@ defmodule MergeWeb.MergeRequestLive do
             Approve
           </button>
           <button
+            :if={@mr.status != :approved}
             id="reject-button"
             type="button"
             phx-click="open_dialog"
