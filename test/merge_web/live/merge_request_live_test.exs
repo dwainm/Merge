@@ -168,6 +168,8 @@ defmodule MergeWeb.MergeRequestLiveTest do
 
     assert has_element?(view, "#decision-0", "Approved")
     refute has_element?(view, "#decision-0", "The experience is wrong")
+    # Approved, the page goes back to the top.
+    assert_push_event(view, "review-sent", %{to: "top"})
   end
 
   test "once approved only Comment is left, and the verdict stays", %{conn: conn} = c do

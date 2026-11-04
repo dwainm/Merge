@@ -136,7 +136,7 @@ defmodule MergeWeb.MergeRequestLive do
      socket
      |> assign(mr: mr, review_form: review_form, dialog: nil, dialog_error: nil)
      |> load_files()
-     |> push_event("review-sent", %{to: entry_id(added)})
+     |> push_event("review-sent", %{to: sent_to(added)})
      |> put_flash(:info, flash)}
   end
 
@@ -151,6 +151,11 @@ defmodule MergeWeb.MergeRequestLive do
   end
 
   defp blank_form(name), do: to_form(%{"body" => ""}, as: name)
+
+  # Approved, the page goes back to the top, where the badge says so; otherwise
+  # to what was added.
+  defp sent_to(%{verdict: :approved}), do: "top"
+  defp sent_to(added), do: entry_id(added)
 
   # The DOM id of a comment or decision in the conversation.
   defp entry_id(%{verdict: _, round: round}), do: "decision-#{round}"
@@ -865,10 +870,12 @@ defmodule MergeWeb.MergeRequestLive do
         </.form>
       </.review_dialog>
       <script :type={Phoenix.LiveView.ColocatedHook} name=".ReviewSent">
-        // Once a comment or decision is in, show what was added.
+        // Once a comment or decision is in, show what was added; an approval
+        // goes back to the top.
         export default {
           mounted() {
             this.handleEvent("review-sent", ({to}) => {
+              if (to === "top") return window.scrollTo({top: 0, behavior: "smooth"})
               document.getElementById(to)?.scrollIntoView({behavior: "smooth", block: "center"})
             })
           }
