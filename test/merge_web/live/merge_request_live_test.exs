@@ -168,6 +168,47 @@ defmodule MergeWeb.MergeRequestLiveTest do
 
     assert has_element?(view, "#decision-0", "Approved")
     refute has_element?(view, "#decision-0", "The experience is wrong")
+    # Approved, the page goes back to the top.
+    assert_push_event(view, "review-sent", %{to: "top"})
+  end
+
+  test "once approved only Comment is left, and the verdict stays", %{conn: conn} = c do
+    {:ok, view, _html} = live(conn, MergeWeb.mr_path(c.branch))
+    view |> element("#approve-button") |> render_click()
+    view |> element("#approve-confirm") |> render_click()
+
+    assert has_element?(view, "#decision-0", "Approved")
+    assert has_element?(view, "#review-bar #comment-button")
+    refute has_element?(view, "#approve-button")
+    refute has_element?(view, "#reject-button")
+
+    # A fresh load is the same, and Comment still sends.
+    {:ok, view, _html} = live(conn, MergeWeb.mr_path(c.branch))
+    refute has_element?(view, "#approve-button")
+    refute has_element?(view, "#reject-button")
+    view |> element("#comment-button") |> render_click()
+    view |> form("#comment-form", review: %{body: "One more thing."}) |> render_submit()
+    assert {:ok, %{comments: [%{body: "One more thing."}]}} = MergeRequest.get(c.branch)
+  end
+
+  test "sent back, the bar keeps all three for the next look", %{conn: conn} = c do
+    {:ok, _} = MergeRequest.decide(c.branch, :needs_work, "Add a readme.")
+    {:ok, view, _html} = live(conn, MergeWeb.mr_path(c.branch))
+
+    assert has_element?(view, "#review-bar #comment-button")
+    assert has_element?(view, "#review-bar #approve-button")
+    assert has_element?(view, "#review-bar #reject-button")
+  end
+
+  test "approved then merged, the bar is gone", %{conn: conn} = c do
+    {:ok, _} = MergeRequest.decide(c.branch, :approved)
+    {:ok, view, _html} = live(conn, MergeWeb.mr_path(c.branch))
+    sha = GitRepo.git!(c.repo, ["rev-parse", "HEAD"]) |> String.trim()
+    {:ok, _} = MergeRequest.merged(c.branch, sha)
+
+    assert has_element?(view, "#done-banner")
+    assert has_element?(view, "#decision-0", "Approved")
+    refute has_element?(view, "#review-bar")
   end
 
   test "rejecting without a word is refused, with the message", %{conn: conn} = c do

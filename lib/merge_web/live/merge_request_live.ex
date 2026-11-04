@@ -136,7 +136,7 @@ defmodule MergeWeb.MergeRequestLive do
      socket
      |> assign(mr: mr, review_form: review_form, dialog: nil, dialog_error: nil)
      |> load_files()
-     |> push_event("review-sent", %{to: entry_id(added)})
+     |> push_event("review-sent", %{to: sent_to(added)})
      |> put_flash(:info, flash)}
   end
 
@@ -151,6 +151,11 @@ defmodule MergeWeb.MergeRequestLive do
   end
 
   defp blank_form(name), do: to_form(%{"body" => ""}, as: name)
+
+  # Approved, the page goes back to the top, where the badge says so; otherwise
+  # to what was added.
+  defp sent_to(%{verdict: :approved}), do: "top"
+  defp sent_to(added), do: entry_id(added)
 
   # The DOM id of a comment or decision in the conversation.
   defp entry_id(%{verdict: _, round: round}), do: "decision-#{round}"
@@ -731,7 +736,8 @@ defmodule MergeWeb.MergeRequestLive do
       <%!-- Always at hand at the bottom; .BottomSpace keeps the page's bottom
            clear by the bar's height, so the last file can scroll above it.
            Three plain actions, each with its own dialog, so a note typed for
-           one can't go with another. --%>
+           one can't go with another. Once approved only Comment is left: the
+           verdict is on the page. Merged or closed, the bar goes. --%>
       <div
         :if={not MergeRequest.done?(@mr)}
         id="review-bar"
@@ -760,6 +766,7 @@ defmodule MergeWeb.MergeRequestLive do
             Comment
           </button>
           <button
+            :if={@mr.status != :approved}
             id="approve-button"
             type="button"
             phx-click="open_dialog"
@@ -769,6 +776,7 @@ defmodule MergeWeb.MergeRequestLive do
             Approve
           </button>
           <button
+            :if={@mr.status != :approved}
             id="reject-button"
             type="button"
             phx-click="open_dialog"
@@ -862,10 +870,12 @@ defmodule MergeWeb.MergeRequestLive do
         </.form>
       </.review_dialog>
       <script :type={Phoenix.LiveView.ColocatedHook} name=".ReviewSent">
-        // Once a comment or decision is in, show what was added.
+        // Once a comment or decision is in, show what was added; an approval
+        // goes back to the top.
         export default {
           mounted() {
             this.handleEvent("review-sent", ({to}) => {
+              if (to === "top") return window.scrollTo({top: 0, behavior: "smooth"})
               document.getElementById(to)?.scrollIntoView({behavior: "smooth", block: "center"})
             })
           }
