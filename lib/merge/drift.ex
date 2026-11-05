@@ -10,7 +10,8 @@ defmodule Merge.Drift do
   it, and `merge_github/0` brings GitHub's commits in when the two have
   diverged. A push is judged by git's answer and then by a fetch: GitHub's main
   must have the commit that went. A failure stays on the home page until the
-  next push; a success shows for a few seconds.
+  next push, or until a refresh finds the commits it tried to send on GitHub
+  anyway (pushed from a terminal, say); a success shows for a few seconds.
   """
 
   alias Merge.{Events, Git, MergeRequest}
@@ -139,6 +140,21 @@ defmodule Merge.Drift do
   @doc "The last push's result, or nil."
   def last_push, do: Merge.Store.get_named("last_push")
 
+  @doc """
+  Forgets a failed last push once GitHub's main has what it tried to send (its
+  `tip`, else its `to`): the failure no longer describes the world. A failure
+  whose commits are still not on GitHub stays. Called by every `refresh/1`.
+  """
+  def drop_stale_push(repo) do
+    with %{ok: false} = push <- last_push(),
+         ref when is_binary(ref) <- push[:tip] || push[:to],
+         true <- Git.ancestor?(repo, ref, "origin/main") do
+      Merge.Store.delete_named("last_push")
+    end
+
+    :ok
+  end
+
   @doc "The repo's page on GitHub (`https://github.com/owner/name`), or nil."
   def github(repo) do
     with {url, 0} <- System.cmd("git", ["-C", repo, "remote", "get-url", "origin"]),
@@ -207,6 +223,7 @@ defmodule Merge.Drift do
            do: Map.merge(d, %{ci: ci(repo), landing: will_land(d)})
 
     emit_tip(current(), drift)
+    if drift, do: drop_stale_push(drift.repo)
     put_current(drift)
     broadcast(drift)
     drift

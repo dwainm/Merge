@@ -39,6 +39,13 @@ defmodule Merge.Store do
     :ok
   end
 
+  def delete_named(name) do
+    with dir when is_binary(dir) <- dir(),
+         do: File.rm(Path.join(Path.dirname(dir), name <> ".term"))
+
+    :ok
+  end
+
   def get_named(name) do
     with dir when is_binary(dir) <- dir(),
          {:ok, bin} <- File.read(Path.join(Path.dirname(dir), name <> ".term")) do
