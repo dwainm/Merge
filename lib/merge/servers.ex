@@ -26,11 +26,17 @@ defmodule Merge.Servers do
   `status` is what a GET of the tree's URL got (`probe/2`): `:up`, `:error`
   with the page's title as `reason`, `:not_answering`, or `:off` when nothing
   listens. `dev?` says the tree has an executable `bin/dev` to run.
+
+  A repo reached through a symlink (`/root/projects/gitastic`, kept from the
+  rename, points at `/root/projects/merge`) is the same repo: each git
+  directory is resolved to its real path (`real_path/1`) before they are
+  compared and named.
   """
   def read(repos \\ repos(), listeners \\ listeners(), req \\ []) do
     repos
     |> Enum.map(&Git.common_dir/1)
     |> Enum.reject(&is_nil/1)
+    |> Enum.map(&real_path/1)
     |> Enum.uniq()
     |> Enum.map(&repo(&1, listeners))
     |> Enum.reject(&(&1.trees == []))
@@ -147,6 +153,36 @@ defmodule Merge.Servers do
   def tree_for(mr, repos) do
     trees = Enum.flat_map(repos, & &1.trees)
     Enum.find(trees, &(&1.branch == mr.branch)) || Enum.find(trees, &(&1.path == mr.repo))
+  end
+
+  @doc """
+  `path` with every symlink in it followed, as `realpath(1)` gives it. A part
+  that cannot be read as a link (a plain directory, or one that is gone) stays
+  as it is.
+  """
+  def real_path(path), do: path |> Path.expand() |> Path.split() |> resolve("/", 0)
+
+  defp resolve([], dir, _), do: dir
+  defp resolve(["/" | rest], _dir, n), do: resolve(rest, "/", n)
+
+  # A loop of links would never end; 40 is Linux's own limit.
+  defp resolve(parts, dir, 40), do: Path.join([dir | parts])
+
+  defp resolve([part | rest], dir, n) do
+    path = Path.join(dir, part)
+
+    case :file.read_link_all(path) do
+      {:ok, target} ->
+        target
+        |> to_string()
+        |> Path.expand(dir)
+        |> Path.split()
+        |> Kernel.++(rest)
+        |> resolve("/", n + 1)
+
+      {:error, _} ->
+        resolve(rest, path, n)
+    end
   end
 
   @doc "What the watcher read last, or nil before its first round."

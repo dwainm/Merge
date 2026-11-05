@@ -61,6 +61,18 @@ defmodule Merge.ServersTest do
     assert [] = Servers.read([c.repo <> "-nowhere"], %{})
   end
 
+  test "a repo reached through a symlink is one repo, named by its real directory", c do
+    link = c.repo <> "-old-name"
+    File.ln_s!(c.repo, link)
+    on_exit(fn -> File.rm(link) end)
+
+    assert [%{name: name, trees: trees}] = Servers.read([c.repo, link], %{})
+    assert name == c.name
+    assert Enum.map(trees, & &1.path) |> Enum.sort() == Enum.sort([c.repo, c.tree])
+
+    assert Servers.real_path(link) == Servers.real_path(c.repo)
+  end
+
   test "tree_for is the tree the branch is checked out in, else the one it was opened in", c do
     repos = Servers.read([c.repo], %{})
 
