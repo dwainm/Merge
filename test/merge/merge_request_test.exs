@@ -32,6 +32,43 @@ defmodule Merge.MergeRequestTest do
     assert Enum.count(MergeRequest.list(), &(&1.branch == c.branch)) == 1
   end
 
+  test "a new body replaces the old in place, and nothing else changes", c do
+    {:ok, _} = MergeRequest.comment(c.branch, %{body: "Why empty?", path: "lib/app.ex", line: 1})
+    {:ok, _} = MergeRequest.reply(c.branch, 1, "Nothing uses it", "agent-a")
+    {:ok, _} = MergeRequest.decide(c.branch, :needs_work, "Say so in the body")
+    {:ok, before} = MergeRequest.get(c.branch)
+    assert before.body_updated_at == nil
+
+    assert {:ok, :updated} = MergeRequest.update_body(c.branch, "## Test it\nOpen the app.")
+    {:ok, mr} = MergeRequest.get(c.branch)
+
+    assert mr.body == "## Test it\nOpen the app."
+    assert %DateTime{} = mr.body_updated_at
+    assert Map.drop(mr, [:body, :body_updated_at]) == Map.drop(before, [:body, :body_updated_at])
+
+    assert {:ok, :unchanged} = MergeRequest.update_body(c.branch, "## Test it\nOpen the app.")
+    assert {:error, _} = MergeRequest.update_body(c.branch, "  ")
+
+    MergeRequest.close(c.branch)
+    assert {:error, _} = MergeRequest.update_body(c.branch, "Too late")
+  end
+
+  test "opening an open branch again with a body updates it rather than duplicating", c do
+    {:ok, _} = MergeRequest.comment(c.branch, %{body: "Looks fine"})
+    {:ok, before} = MergeRequest.get(c.branch)
+
+    assert {:ok, mr, :body_updated} =
+             MergeRequest.open(%{branch: c.branch, repo: c.repo, body: "Now with a test"})
+
+    assert mr.body == "Now with a test"
+    assert mr.opened_at == before.opened_at
+    assert mr.comments == before.comments
+    assert Enum.count(MergeRequest.list(), &(&1.branch == c.branch)) == 1
+
+    assert {:ok, _, :existing} =
+             MergeRequest.open(%{branch: c.branch, repo: c.repo, body: "Now with a test"})
+  end
+
   test "a stacked branch is reviewed against its parent", %{branch: parent, repo: repo} do
     child = parent <> "-child"
     GitRepo.git!(repo, ["checkout", "-q", "-b", child])

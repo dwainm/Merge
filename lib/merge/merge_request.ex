@@ -68,6 +68,7 @@ defmodule Merge.MergeRequest do
     :git_dir,
     :merge_check,
     :groups,
+    :body_updated_at,
     conflicts: [],
     branch_state: :ok,
     status: :open,
@@ -109,8 +110,9 @@ defmodule Merge.MergeRequest do
   @doc """
   Opens a merge request for `attrs.branch` in `attrs.repo`, or, when one is
   already open for the branch, registers the opener on it (and takes its
-  `groups`, when it brings some). A done one for the branch makes way for the
-  new one. Returns `{:ok, mr, :opened | :existing}`.
+  `groups`, when it brings some), and a body it brings replaces the old one
+  in place (see `update_body/3`). A done one for the branch makes way for the
+  new one. Returns `{:ok, mr, :opened | :existing | :body_updated}`.
   """
   def open(attrs) do
     attrs = Map.new(attrs)
@@ -118,8 +120,9 @@ defmodule Merge.MergeRequest do
 
     case lookup(branch) do
       {:ok, pid} ->
-        case GenServer.call(pid, {:register, attrs[:opened_by], groups(attrs)}) do
+        case GenServer.call(pid, {:register, attrs[:opened_by], groups(attrs), attrs[:body]}) do
           :ok -> {:ok, get!(branch), :existing}
+          :body_updated -> {:ok, get!(branch), :body_updated}
           :done -> open(attrs)
         end
 
@@ -225,6 +228,14 @@ defmodule Merge.MergeRequest do
   end
 
   def working_note(_mr), do: nil
+
+  @doc """
+  Replaces the body of an open merge request in place, keeping the comments,
+  the decisions, the commits and when it was opened; `body_updated_at` says
+  when, and a `groups` block in it replaces how the files group. Emits
+  `body-updated`. Answers `{:ok, :updated | :unchanged}`.
+  """
+  def update_body(branch, body, by \\ nil), do: call(branch, {:body, body, by})
 
   @doc """
   Records that `commit` addresses the last decision, recomputes the diff and
@@ -343,14 +354,14 @@ defmodule Merge.MergeRequest do
 
   # A done merge request steps aside for a new one on the same branch: it
   # unregisters itself before it stops, so the branch is free at once.
-  def handle_call({:register, _name, _groups}, _from, %{status: status} = state)
+  def handle_call({:register, _name, _groups, _body}, _from, %{status: status} = state)
       when status in [:merged, :closed] do
     Registry.unregister(Merge.Registry, state.branch)
     {:stop, :normal, :done, state}
   end
 
   # Opening it again hands it back for review.
-  def handle_call({:register, name, groups}, _from, state) do
+  def handle_call({:register, name, groups, body}, _from, state) do
     state = register(state, name)
 
     {state, groups} =
@@ -358,13 +369,19 @@ defmodule Merge.MergeRequest do
         do: {%{state | status: :open}, groups || state.groups},
         else: {state, groups}
 
-    if groups,
-      do: {:reply, :ok, changed(%{state | groups: groups})},
-      else:
-        (
-          Merge.Store.put(saved(state))
-          {:reply, :ok, state}
-        )
+    state = if groups, do: %{state | groups: groups}, else: state
+
+    case put_body(state, body, name) do
+      {:updated, state} ->
+        {:reply, :body_updated, changed(state)}
+
+      {:unchanged, state} when groups != nil ->
+        {:reply, :ok, changed(state)}
+
+      {:unchanged, state} ->
+        Merge.Store.put(saved(state))
+        {:reply, :ok, state}
+    end
   end
 
   def handle_call({:wait, name, _timeout}, _from, %{status: status} = state)
@@ -452,7 +469,7 @@ defmodule Merge.MergeRequest do
 
   def handle_call(msg, _from, %{status: status} = state)
       when status in [:merged, :closed] and
-             elem(msg, 0) in [:comment, :reply, :decide, :addressed, :working] do
+             elem(msg, 0) in [:comment, :reply, :decide, :addressed, :working, :body] do
     {:reply, {:error, "This merge request is #{status}."}, state}
   end
 
@@ -594,6 +611,17 @@ defmodule Merge.MergeRequest do
     {:reply, {:ok, entry}, changed(tell_waiters(state))}
   end
 
+  def handle_call({:body, body, by}, _from, state) do
+    if blank_to_nil(body) == nil do
+      {:reply, {:error, "A body needs some text."}, state}
+    else
+      case put_body(state, body, by) do
+        {:updated, state} -> {:reply, {:ok, :updated}, changed(state)}
+        {:unchanged, state} -> {:reply, {:ok, :unchanged}, state}
+      end
+    end
+  end
+
   def handle_call({:addressed, commit, note, by, groups}, _from, state) do
     repo = git_repo(state)
     before = state
@@ -685,6 +713,27 @@ defmodule Merge.MergeRequest do
   def terminate(_reason, _state), do: broadcast_list()
 
   ## Helpers
+
+  # A new body (and its `groups` block) in place of the old; nothing else
+  # changes. A blank or identical one is no change.
+  defp put_body(state, body, by) do
+    {body, groups} = Merge.Body.split_groups(body)
+
+    if blank_to_nil(body) == nil and groups == nil do
+      {:unchanged, state}
+    else
+      body = body || ""
+      new = %{state | body: body, groups: groups || state.groups}
+
+      if new.body == state.body and new.groups == state.groups do
+        {:unchanged, state}
+      else
+        new = Map.put(new, :body_updated_at, DateTime.utc_now())
+        Events.emit("body-updated", state.branch, "by #{blank_to_nil(by) || state.opened_by}")
+        {:updated, new}
+      end
+    end
+  end
 
   defp register(state, name) do
     case blank_to_nil(name) do

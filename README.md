@@ -15,6 +15,10 @@ No GitHub and no database: each merge request is a process, gone when the server
 
     merge mr open <branch> [--repo PATH] [--base BRANCH] [--title T] [--body B | --body-file F] [--groups F] [--as NAME]
         cd /root/projects/dayofplenty && merge mr open checkin --title "Coffee shop check-in"
+        merge mr open checkin --body-file F   # already open: replaces the body in place, keeps the review
+
+    merge mr body <branch> (--body B | --body-file F) [--as NAME]
+        merge mr body checkin --body-file /tmp/checkin-body.md   # replaces the body, keeps the review
 
     merge mr wait <branch> [--as NAME]
         merge mr wait checkin           # blocks until Approve or Reject, prints it with every comment
@@ -41,7 +45,7 @@ No GitHub and no database: each merge request is a process, gone when the server
         merge mr watch --since 2h       # 2026-10-19T14:03:22Z comment checkin lib/app.ex:12 reviewer: Why?
 
 `mr watch` prints one line per event, as it happens, and never returns: `opened`, `comment`,
-`approved`, `needs-work`, `working`, `addressed`, `new-commits`, `conflicts`, `merges-cleanly`, `rewritten`,
+`approved`, `needs-work`, `working`, `addressed`, `new-commits`, `body-updated`, `conflicts`, `merges-cleanly`, `rewritten`,
 `branch-gone`, `merged`, `on-origin`, `closed`, and for `main`: `main-tip`, `checks-running`,
 `checks-passed`, `checks-failed`, `image-running`, `image-passed`, `image-failed`, `pushed`,
 `push-failed`. The lines are kept in

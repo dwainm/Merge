@@ -51,6 +51,25 @@ defmodule Merge.EventsTest do
     assert line =~ " opened #{branch} "
   end
 
+  test "a new body is an event, and the pages hear it" do
+    start = DateTime.utc_now()
+    branch = "events-#{System.unique_integer([:positive])}"
+    repo = GitRepo.new(branch)
+    GitRepo.commit!(repo, %{"lib/app.ex" => "defmodule App do\nend\n"}, "Empty the app")
+    on_exit(fn -> MergeRequest.close(branch) end)
+    {:ok, _, :opened} = MergeRequest.open(%{branch: branch, repo: repo, opened_by: "a"})
+
+    Phoenix.PubSub.subscribe(Merge.PubSub, MergeRequest.topic(branch))
+    Phoenix.PubSub.subscribe(Merge.PubSub, MergeRequest.list_topic())
+    {:ok, :updated} = MergeRequest.update_body(branch, "New test", "b")
+
+    assert [_opened, ["body-updated", ^branch, "by b"]] =
+             for(line <- Events.since(start), do: line |> String.split(" ", parts: 4) |> tl())
+
+    assert_receive {:merge_request, %{body: "New test"}}
+    assert_receive :merge_requests_changed
+  end
+
   test "since gives the lines after a time, so a reader resumes without repeats" do
     Events.emit("main-tip", "main", "aaa → bbb")
     Events.emit("pushed", "main", "1 commits")

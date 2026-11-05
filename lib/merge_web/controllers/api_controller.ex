@@ -70,6 +70,14 @@ defmodule MergeWeb.ApiController do
     end
   end
 
+  def body(conn, %{"branch" => branch} = params) do
+    case MergeRequest.update_body(branch, params["body"], params["as"]) do
+      {:ok, result} -> json(conn, %{result: result, url: MergeWeb.mr_url(branch)})
+      {:error, message} -> error(conn, 422, message)
+      :error -> not_found(conn, branch)
+    end
+  end
+
   def working(conn, %{"branch" => branch} = params) do
     case MergeRequest.working(branch, params["note"], params["as"]) do
       {:ok, entry} -> json(conn, %{working: entry, url: MergeWeb.mr_url(branch)})
