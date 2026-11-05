@@ -2,7 +2,8 @@ defmodule Merge.MCP.OpenMergeRequest do
   @moduledoc """
   Opens a merge request for a branch so a person can review it against its base
   (origin/main when the repo has it, else main). Opening registers you to hear
-  the decision; call wait_for_review next.
+  the decision; call wait_for_review next. Opening a branch that is already
+  open replaces its body with the one given, keeping the review.
   """
 
   use Anubis.Server.Component, type: :tool
@@ -40,7 +41,12 @@ defmodule Merge.MCP.OpenMergeRequest do
            opened_by: params[:as]
          }) do
       {:ok, mr, how} ->
-        verb = if how == :existing, do: "Already open", else: "Opened"
+        verb =
+          case how do
+            :existing -> "Already open"
+            :body_updated -> "Already open, body updated"
+            :opened -> "Opened"
+          end
 
         Merge.MCP.reply(
           """

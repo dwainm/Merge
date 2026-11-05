@@ -2,7 +2,7 @@ defmodule Merge.MCP.WatchEvents do
   @moduledoc """
   Returns the event lines on any merge request or main after `since`, one per
   line: `<time> <event> <branch> <detail>` (opened, comment, approved,
-  needs-work, addressed, new-commits, conflicts, merges-cleanly, rewritten,
+  needs-work, addressed, new-commits, body-updated, conflicts, merges-cleanly, rewritten,
   branch-gone, merged, on-origin, closed; for main: main-tip, checks-running,
   checks-passed, checks-failed, pushed, push-failed). When there are none yet,
   holds up to 5 minutes for the next. Call it again with the `since` it gives

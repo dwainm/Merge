@@ -29,6 +29,15 @@ defmodule MergeWeb.MergeRequestLiveTest do
     refute has_element?(page, "#review-bar")
   end
 
+  test "a new body shows at once, with when it was updated", %{conn: conn} = c do
+    {:ok, view, _html} = live(conn, MergeWeb.mr_path(c.branch))
+    refute has_element?(view, "#body-updated")
+
+    {:ok, :updated} = MergeRequest.update_body(c.branch, "## Test it\nRun it again.")
+    assert has_element?(view, "#mr-body h2", "Test it")
+    assert has_element?(view, "#body-updated", "Body updated just now")
+  end
+
   test "the diff, the commits, and one commit alone", %{conn: conn} = c do
     second = GitRepo.commit!(c.repo, %{"README.md" => "# App\n"}, "Add a readme")
     {:ok, _} = MergeRequest.addressed(c.branch, second)
@@ -62,10 +71,10 @@ defmodule MergeWeb.MergeRequestLiveTest do
     ```
     """
 
-    {:ok, mr, :existing} = MergeRequest.open(%{branch: c.branch, repo: c.repo, body: body})
+    {:ok, mr, :body_updated} = MergeRequest.open(%{branch: c.branch, repo: c.repo, body: body})
     assert mr.groups == "The app, emptied\nNothing is left of it.\nlib/app.ex"
     # The body keeps the block out of the page's text.
-    assert mr.body == ""
+    assert mr.body == "Empties the app."
 
     {:ok, view, _html} = live(conn, MergeWeb.mr_path(c.branch))
     refute has_element?(view, "#group-0")

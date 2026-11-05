@@ -298,6 +298,14 @@ defmodule MergeWeb.MergeRequestLive do
         <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-(--text-muted)">
           <span class="font-mono">{@mr.branch} → {@mr.base}</span>
           <span>opened by {@mr.opened_by} {ago(@mr.opened_at)}</span>
+          <span
+            :if={updated = Map.get(@mr, :body_updated_at)}
+            id="body-updated"
+            class="text-(--info-text)"
+            title={DateTime.to_iso8601(updated)}
+          >
+            Body updated {ago(updated)}
+          </span>
           <span id="agents">
             told: {Enum.join(@mr.agents, ", ")}
             <span :if={@mr.waiting != []} class="text-(--ok-text)">

@@ -11,6 +11,7 @@ defmodule Merge.CLI do
   @usage """
   merge serve [--port N] [--repo PATH] [--check CMD] [--check-image CMD]
   merge mr open <branch> [--repo PATH] [--base BRANCH] [--title T] [--body B | --body-file F] [--groups F] [--as NAME]
+  merge mr body <branch> (--body B | --body-file F) [--as NAME]   replaces the body in place, keeping the review
   merge mr wait <branch> [--as NAME]      returns on each comment or decision; run it again to keep listening
   merge mr addressed <branch> <commit> [--note "..."] [--groups F] [--as NAME]
   merge mr working <branch> [--note "..."] [--as NAME]   In progress: you're on it again, until addressed
@@ -66,7 +67,12 @@ defmodule Merge.CLI do
              groups: groups,
              as: agent(opts)
            }) do
-      verb = if result == "existing", do: "Already open", else: "Opened"
+      verb =
+        case result do
+          "existing" -> "Already open"
+          "body_updated" -> "Already open, body updated"
+          _ -> "Opened"
+        end
 
       IO.puts("""
       #{verb}: #{mr["title"]} (#{mr["branch"]} → #{mr["base"]}, #{mr["commits"]} commits, #{mr["files"]} files)
@@ -77,6 +83,17 @@ defmodule Merge.CLI do
   end
 
   defp command(["mr", "wait", branch], opts), do: wait(branch, agent(opts))
+
+  defp command(["mr", "body", branch], opts) do
+    with {:ok, body} <- body(opts),
+         true <- body != nil || {:error, "Give the new body with --body or --body-file."},
+         {:ok, %{"result" => result, "url" => url}} <-
+           post("/api/body", %{branch: branch, body: body, as: agent(opts)}) do
+      if result == "updated",
+        do: IO.puts("Body updated: #{url}"),
+        else: IO.puts("Body unchanged: #{url}")
+    end
+  end
 
   defp command(["mr", "addressed", branch, commit], opts) do
     with {:ok, groups} <- groups(opts),
