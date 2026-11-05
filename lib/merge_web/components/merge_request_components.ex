@@ -852,11 +852,11 @@ defmodule MergeWeb.MergeRequestComponents do
       <pre
         :if={match?(%{ok: false}, @status)}
         class="mt-2 max-h-48 overflow-auto rounded-md bg-(--bad-bg) p-2 text-xs text-(--text)"
-      >{last_lines(@status.log, 15)}</pre>
+      >{excerpt(@status)}</pre>
       <pre
         :if={match?(%{ok: false}, @image)}
         class="mt-2 max-h-48 overflow-auto rounded-md bg-(--bad-bg) p-2 text-xs text-(--text)"
-      >{last_lines(@image.log, 15)}</pre>
+      >{excerpt(@image)}</pre>
     </div>
     """
   end
@@ -866,8 +866,10 @@ defmodule MergeWeb.MergeRequestComponents do
     "#{div(seconds, 60)}m #{rem(seconds, 60)}s"
   end
 
-  defp last_lines(log, n),
-    do: log |> String.trim_trailing() |> String.split("\n") |> Enum.take(-n) |> Enum.join("\n")
+  # The step that failed (`Merge.Checks.Excerpt`); a result kept before there were
+  # excerpts has only its last lines.
+  defp excerpt(%{excerpt: excerpt}) when is_binary(excerpt), do: excerpt
+  defp excerpt(%{log: log}), do: Merge.Checks.Excerpt.excerpt(log)
 
   @doc "A short relative time for an ISO 8601 string or a DateTime."
   def ago(iso) when is_binary(iso) do

@@ -6,8 +6,9 @@ defmodule Merge.Checks do
   `want/2` asks for a commit; while a run goes, only the newest commit asked
   for waits behind it, so a superseded tip is skipped.
 
-  A result per commit (`%{sha, ok, started_at, finished_at, log}`, the log's
-  last lines) is kept on disk with the whole log beside it, and broadcast on
+  A result per commit (`%{sha, ok, started_at, finished_at, log, excerpt}`,
+  the log's last lines and, when it failed, the lines of the step that failed
+  first, `Merge.Checks.Excerpt`, read off the whole log) is kept on disk with the whole log beside it, and broadcast on
   `topic/0` as `{:checks, sha}`. Without a command there are no checks, and
   Push is not held back.
 
@@ -272,7 +273,8 @@ defmodule Merge.Checks do
       ok: ok?,
       started_at: run.started_at,
       finished_at: DateTime.utc_now(),
-      log: log |> String.split("\n") |> Enum.take(-@tail_lines) |> Enum.join("\n")
+      log: log |> String.split("\n") |> Enum.take(-@tail_lines) |> Enum.join("\n"),
+      excerpt: if(ok?, do: nil, else: Merge.Checks.Excerpt.excerpt(log))
     }
 
     key = if run.kind == :check, do: :results, else: :image_results

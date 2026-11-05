@@ -39,7 +39,7 @@ defmodule MergeWeb.HomeLive do
   def handle_info(:merge_requests_changed, socket), do: {:noreply, load(socket)}
 
   def handle_info({:drift, drift}, socket),
-    do: {:noreply, socket |> assign(drift: drift) |> load_checks()}
+    do: {:noreply, socket |> assign(drift: drift) |> drop_stale_push() |> load_checks()}
 
   def handle_info({:checks, _sha}, socket), do: {:noreply, socket |> load_checks() |> load()}
 
@@ -122,6 +122,15 @@ defmodule MergeWeb.HomeLive do
   end
 
   defp show_push(socket, result), do: assign(socket, last_push: result)
+
+  # The refresh behind a drift forgets a failure whose commits are on GitHub after all
+  # (`Drift.drop_stale_push/1`); the card goes with it.
+  defp drop_stale_push(socket) do
+    case socket.assigns.last_push do
+      %{ok: false} -> assign(socket, last_push: Drift.last_push())
+      _ -> socket
+    end
+  end
 
   defp push(socket, to) do
     socket |> assign(busy: :push) |> start_async(:push, fn -> Drift.push(Drift.repo(), to) end)

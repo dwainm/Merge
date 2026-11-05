@@ -35,7 +35,7 @@ defmodule Merge.ChecksTest do
     server = checks(c, "git rev-parse HEAD; echo checked")
     Checks.want(c.repo, c.sha, server)
 
-    assert %{ok: true, sha: sha, log: log} = finished(server, c.sha)
+    assert %{ok: true, sha: sha, log: log, excerpt: nil} = finished(server, c.sha)
     assert sha == c.sha
     assert log =~ c.sha
     assert log =~ "checked"
@@ -52,6 +52,21 @@ defmodule Merge.ChecksTest do
 
     assert %{ok: false, log: log} = finished(server, c.sha)
     assert log =~ "1 failure"
+  end
+
+  test "a failed result keeps the step that failed first, read off the whole log", c do
+    server =
+      checks(
+        c,
+        "echo Advisories:; echo '  ecto 3.14.2 - EEF-CVE-2026-118391 (HIGH)'; " <>
+          "echo 'Found packages with security advisories'; seq 1 200; echo 'Result: 994 passed'; exit 1"
+      )
+
+    Checks.want(c.repo, c.sha, server)
+
+    assert %{ok: false, log: log, excerpt: excerpt} = finished(server, c.sha)
+    refute log =~ "Advisories:"
+    assert excerpt =~ ~r/\AAdvisories:.*EEF-CVE-2026-118391.*security advisories\z/s
   end
 
   test "while one runs, only the newest tip waits; a superseded one is skipped", c do
