@@ -6,8 +6,9 @@ defmodule Merge.Watcher do
   broadcasts the trees and their servers (`Merge.Servers`), and lets
   `Merge.AutoPush` push main when it is due, with a timer for the moment it
   falls due between rounds, and lets `Merge.AutoMerge` merge approved branches
-  into main (after each round, on each approval, when its switch goes on): all
-  in this one process, so one merge runs at a time. `refresh/0` does the round
+  into main (after each round, and on each approval): all in this one process,
+  so one merge runs at a time. Each round first starts any stored merge request
+  whose process is gone (`Merge.MergeRequest.restore_missing/0`). `refresh/0` does the round
   at once (the home page asks on load).
   """
 
@@ -62,7 +63,7 @@ defmodule Merge.Watcher do
 
   def handle_cast(:schedule_auto_push, state), do: {:noreply, schedule(state)}
 
-  # Off unless its switch is on. A merge moves main, so the auto-push's timer is set again.
+  # A merge moves main, so the auto-push's timer is set again.
   def handle_cast({:auto_merge, branch}, state) do
     Merge.AutoMerge.run(branch)
     {:noreply, schedule(state)}
@@ -86,6 +87,8 @@ defmodule Merge.Watcher do
 
   @doc "One round: fetch, drift, merges, servers."
   def run do
+    # A merge request whose process died comes back from its file first.
+    MergeRequest.restore_missing()
     mrs = MergeRequest.list()
 
     [Drift.repo() | Enum.map(mrs, &MergeRequest.git_repo/1)]

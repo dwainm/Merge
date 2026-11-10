@@ -1,112 +1,70 @@
 defmodule Merge.AutoMerge do
   @moduledoc """
-  Merges an approved branch into main by itself, as a coordinator would.
+  Merges an approved branch into main by itself, as a coordinator would. There
+  is no switch: an approval means merge.
 
-  With the switch on, an approved merge request's branch goes into the repo's
-  local main, in the worktree that has main checked out: `git merge --no-ff
-  <tip> -m "Merge <branch>"`, the commit a coordinator makes. Then it is marked
-  merged as `mr merged` does (`Merge.MergeRequest.merged/2`), so `merged`
-  comes first, then `auto-merged <branch> <sha>`, then `main-tip` and the
-  checks, as after any change to main.
+  An approved merge request's branch goes into the repo's local main, in the
+  worktree that has main checked out: `git merge --no-ff <tip> -m "Merge
+  <branch>"`, the commit a coordinator makes. Then it is marked merged as `mr
+  merged` does (`Merge.MergeRequest.merged/2`), so `merged` comes first, then
+  `auto-merged <branch> <sha>`, then `main-tip` and the checks, as after any
+  change to main. Several approved ones go one at a time, oldest approval
+  first, so each new tip of main is one clean step.
 
   It holds, and says why (`hold/1`, and `auto-merge-held <branch> <reason>`
   once per reason), when:
 
     * the approval came with a note, or the review holds a reviewer's comment
-      nobody answered: an Approve that comes with a change request is a hold
+      nobody answered: an Approve that comes with a change request is a mis-tap
     * the base isn't main (a stacked request)
     * the branch is gone, or its tip moved after the approval by anything but
       a merge of main into it (a merge with nothing of its own in it, unless
       it resolved a conflict)
     * main isn't checked out anywhere, its worktree has uncommitted changes to
       tracked files, or a merge (rebase, cherry-pick, revert) is in progress there
-    * the branch doesn't merge cleanly into main: it merges once it does again
+    * main's checks or image build failed on its tip: no merge on a red main
+    * the branch doesn't merge cleanly into main
     * the merge failed: it is aborted, main is as it was, and it isn't tried
       again until the branch or main moves
 
-  It fails closed. The switch is off until someone turns it on, and off when
-  its file is missing or unreadable, or there is no store. A coordinator's own
-  `git merge` and `mr merged` work whatever the switch says.
+  Each hold is looked at again every round, so it merges once the hold is gone
+  and the request is still approved. A coordinator's own `git merge` and `mr
+  merged` work as before: a branch already on main is only marked merged.
 
   No process of its own: `Merge.Watcher` calls `run/1` when a merge request is
-  approved, when the switch goes on, and after each round, so one merge runs
-  at a time (`run/1` also takes a lock, for any other caller). The switch
-  (`auto_merge.term`), the holds (`auto_merge_holds.term`) and the failed
-  tries (`auto_merge_tried.term`) are kept beside the merge requests.
+  approved and after each round, so one merge runs at a time (`run/1` also
+  takes a lock, for any other caller). What holds each branch, and the merges
+  that failed, are kept in memory: after a restart each hold is said once more,
+  and a failed merge may be tried once more. `config :merge, auto_merge: false`
+  (the tests, in test_helper.exs) turns it off.
   """
 
-  alias Merge.{Checks, Drift, Events, Git, MergeRequest, Store}
+  alias Merge.{Checks, Drift, Events, Git, MergeRequest}
 
   def topic, do: "auto_merge"
 
-  ## The switch
-
-  @doc "Whether it is on. Off without a stored switch that says on."
-  def on?, do: match?(%{on: true}, toggle())
-
-  @doc "The stored switch, `%{on, at}`, or nil."
-  def toggle do
-    case Store.get_named("auto_merge") do
-      %{on: on, at: %DateTime{}} = t when is_boolean(on) -> t
-      _ -> nil
-    end
-  rescue
-    _ -> nil
-  end
-
-  @doc """
-  Turns it on or off, from now. Emits `auto-merge-on` / `auto-merge-off`.
-  Turning it on forgets the holds, so each is said again, and looks at once:
-  every approved request that nothing holds merges then, whenever it was
-  approved.
-  Without a store it stays off: `:error`.
-  """
-  def set(on, now \\ DateTime.utc_now()) when is_boolean(on) do
-    if Store.dir() do
-      Store.put_named("auto_merge", %{on: on, at: now})
-
-      if on do
-        Store.delete_named("auto_merge_holds")
-        Events.emit("auto-merge-on", "main", "merges approved branches into main")
-      else
-        Events.emit("auto-merge-off", "main")
-      end
-
-      broadcast()
-      if on, do: Merge.Watcher.auto_merge()
-      :ok
-    else
-      :error
-    end
-  end
+  @doc "Whether it runs at all: always, but in the tests."
+  def enabled?, do: Application.get_env(:merge, :auto_merge, true) != false
 
   ## Holds
 
   @doc "What holds each branch, `%{branch => %{reason, at}}`."
-  def holds do
-    case Store.get_named("auto_merge_holds") do
-      %{} = holds -> holds
-      _ -> %{}
-    end
-  rescue
-    _ -> %{}
-  end
+  def holds, do: :persistent_term.get({__MODULE__, :holds}, %{})
 
   @doc "Why it isn't merging `branch` (lowercase), or nil."
   def hold(branch) do
     with %{reason: reason} <- Map.get(holds(), branch), do: reason
   end
 
+  @doc "What holds `branch`, `%{reason, at}`, or nil."
+  def hold_entry(branch), do: Map.get(holds(), branch)
+
   # Said once per reason: a new reason for the branch is an event, the same one isn't.
   defp note_hold(branch, reason) do
     holds = holds()
 
     unless match?(%{reason: ^reason}, holds[branch]) do
-      Store.put_named(
-        "auto_merge_holds",
-        Map.put(holds, branch, %{reason: reason, at: DateTime.utc_now()})
-      )
-
+      put_holds(Map.put(holds, branch, %{reason: reason, at: DateTime.utc_now()}))
       Events.emit("auto-merge-held", branch, reason)
       broadcast()
     end
@@ -119,32 +77,38 @@ defmodule Merge.AutoMerge do
     kept = Map.drop(holds, branches)
 
     if map_size(kept) != map_size(holds) do
-      Store.put_named("auto_merge_holds", kept)
+      put_holds(kept)
       broadcast()
     end
+  end
+
+  defp put_holds(holds), do: :persistent_term.put({__MODULE__, :holds}, holds)
+
+  defp tried, do: :persistent_term.get({__MODULE__, :tried}, %{})
+
+  defp put_tried(branch, entry) do
+    tried = tried()
+    new = if entry, do: Map.put(tried, branch, entry), else: Map.delete(tried, branch)
+    if new != tried, do: :persistent_term.put({__MODULE__, :tried}, new)
   end
 
   ## Running
 
   @doc """
-  Looks at the approved merge requests (or only `branch`'s) and merges each
-  one that nothing holds. Answers `:off`, or `[{branch, result}]` where a
-  result is `{:merged, sha}` or `{:hold, reason}`. Any error holds it.
+  Looks at the approved merge requests (or only `branch`'s), oldest approval
+  first, and merges each one that nothing holds. Answers `:off` when turned
+  off (the tests), else `[{branch, result}]` where a result is `{:merged,
+  sha}`, `:already` (it was on main) or `{:hold, reason}`. Any error holds it.
+  `opts` as for `judge/2`.
   """
-  def run(branch \\ nil) do
-    if on?(),
-      do: :global.trans({__MODULE__, self()}, fn -> run_on(branch) end, [node()], :infinity),
+  def run(branch \\ nil, opts \\ []) do
+    if enabled?(),
+      do: :global.trans({__MODULE__, :run}, fn -> run_on(branch, opts) end, [node()], :infinity),
       else: :off
   end
 
-  # Oldest approval first, so each new tip of main is one clean step.
-  defp run_on(branch) do
-    mrs = MergeRequest.list()
-    approved = Enum.filter(mrs, &(&1.status == :approved))
-    candidates =
-      approved
-      |> Enum.filter(&(branch == nil or &1.branch == branch))
-      |> Enum.sort_by(&approved_at/1, DateTime)
+  defp run_on(branch, opts) do
+    approved = Enum.filter(MergeRequest.list(), &(&1.status == :approved))
 
     # A hold is about an approved, open merge request; anything else forgets it.
     if branch == nil do
@@ -152,7 +116,10 @@ defmodule Merge.AutoMerge do
       drop_holds(holds() |> Map.keys() |> Enum.reject(&MapSet.member?(keep, &1)))
     end
 
-    for mr <- candidates, do: {mr.branch, run_one(mr)}
+    approved
+    |> Enum.filter(&(branch == nil or &1.branch == branch))
+    |> Enum.sort_by(&approved_at/1, DateTime)
+    |> Enum.map(&{&1.branch, run_one(&1, opts)})
   end
 
   defp approved_at(mr) do
@@ -162,11 +129,18 @@ defmodule Merge.AutoMerge do
     end
   end
 
-  defp run_one(mr) do
-    case judge(mr) do
-      {:merge, plan} -> merge(plan)
-      {:hold, reason} -> note_hold(mr.branch, reason)
-      :already -> :already
+  defp run_one(mr, opts) do
+    case judge(mr, opts) do
+      {:merge, plan} ->
+        merge(plan)
+
+      {:hold, reason} ->
+        note_hold(mr.branch, reason)
+
+      :already ->
+        drop_holds([mr.branch])
+        _ = MergeRequest.check_merged(mr.branch)
+        :already
     end
   rescue
     e -> note_hold(mr.branch, "auto-merge error: " <> Exception.message(e))
@@ -175,9 +149,10 @@ defmodule Merge.AutoMerge do
   @doc """
   What it would do with `mr` (as `Merge.MergeRequest.get/1` gives it):
   `{:merge, plan}`, `{:hold, reason}`, or `:already` when the branch is on
-  main. Reads git, changes nothing.
+  main. Reads git and the checks, changes nothing. `opts` give main's checks
+  (`:checks_on`, `:checks`, `:image`); by default they are read from the server.
   """
-  def judge(mr) do
+  def judge(mr, opts \\ []) do
     decision = List.last(mr.decisions)
     repo = MergeRequest.git_repo(mr)
 
@@ -187,6 +162,7 @@ defmodule Merge.AutoMerge do
          {:ok, worktree, main} <- main_worktree(repo),
          :not_yet <- already(repo, tip, main),
          :ok <- moved_ok(repo, decision.head, tip, main),
+         :ok <- main_green(main, opts),
          :ok <- merges_cleanly(repo, main, tip),
          :ok <- not_failed_before(mr.branch, tip, main) do
       {:merge, %{branch: mr.branch, repo: repo, worktree: worktree, tip: tip, main: main}}
@@ -279,6 +255,31 @@ defmodule Merge.AutoMerge do
 
   defp merge_of_main?(_repo, _commit, _main), do: false
 
+  # No merge on a red main: its checks, or its image build, failed on its tip.
+  defp main_green(main, opts) do
+    if Keyword.get_lazy(opts, :checks_on, &checks_on?/0) do
+      checks = Keyword.get_lazy(opts, :checks, fn -> Checks.status(main) end)
+      image = Keyword.get_lazy(opts, :image, fn -> Checks.image_status(main) end)
+
+      cond do
+        match?(%{ok: false}, checks) ->
+          {:hold, "main's checks failed on #{short(main)}: waiting for a green main"}
+
+        match?(%{ok: false}, image) ->
+          {:hold, "main's image build failed on #{short(main)}: waiting for a green main"}
+
+        true ->
+          :ok
+      end
+    else
+      :ok
+    end
+  end
+
+  defp checks_on? do
+    match?(pid when is_pid(pid), Process.whereis(Checks)) and Checks.enabled?()
+  end
+
   defp merges_cleanly(repo, main, tip) do
     case Git.merge_check(repo, main, tip) do
       :clean -> :ok
@@ -293,23 +294,6 @@ defmodule Merge.AutoMerge do
       %{tip: ^tip, main: ^main, reason: reason} -> {:hold, reason}
       _ -> :ok
     end
-  end
-
-  defp tried do
-    case Store.get_named("auto_merge_tried") do
-      %{} = tried -> tried
-      _ -> %{}
-    end
-  rescue
-    _ -> %{}
-  end
-
-  defp put_tried(branch, entry) do
-    tried = tried()
-
-    tried = if entry, do: Map.put(tried, branch, entry), else: Map.delete(tried, branch)
-
-    Store.put_named("auto_merge_tried", tried)
   end
 
   defp merge(%{branch: branch, worktree: worktree, tip: tip, main: main} = plan) do
@@ -334,13 +318,12 @@ defmodule Merge.AutoMerge do
             do: "the merge failed, main is as it was: #{first_line(output)}",
             else: "the merge failed and main's worktree isn't as it was: look at it by hand"
 
-        put_tried(branch, %{tip: tip, main: main, reason: reason, at: DateTime.utc_now()})
+        put_tried(branch, %{tip: tip, main: main, reason: reason})
         note_hold(branch, reason)
     end
   end
 
-  # As after any change to main: the drift (and its `main-tip`), the checks, and
-  # the other merge requests' merged marks.
+  # As after any change to main: the drift (and its `main-tip`) and the checks.
   defp after_merge(%{repo: repo}) do
     drift_repo = Drift.repo() || repo
 

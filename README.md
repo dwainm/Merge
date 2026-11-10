@@ -46,7 +46,9 @@ No GitHub and no database: each merge request is a process, gone when the server
 
 `mr watch` prints one line per event, as it happens, and never returns: `opened`, `comment`,
 `approved`, `needs-work`, `working`, `addressed`, `new-commits`, `body-updated`, `conflicts`, `merges-cleanly`, `rewritten`,
-`branch-gone`, `merged`, `on-origin`, `closed`, and for `main`: `main-tip`, `checks-running`,
+`branch-gone`, `merged`, `auto-merged` (after the `merged` line of a merge Merge made itself:
+`auto-merged checkin 1a2b3c4`), `auto-merge-held` (once per reason: `auto-merge-held checkin
+main's worktree has uncommitted changes`), `on-origin`, `closed`, and for `main`: `main-tip`, `checks-running`,
 `checks-passed`, `checks-failed`, `image-running`, `image-passed`, `image-failed`, `pushed`,
 `push-failed`, `auto-push-on`, `auto-push-off`, and `auto-pushed` (beside the `pushed` line
 of a push the timer made: `auto-pushed main 3 commits, origin at 1a2b3c4`). The lines are kept in
@@ -149,8 +151,43 @@ once, unless it was superseded before its turn) says in its confirmation whether
 that commit's checks and image build passed, and asks to push anyway when they
 haven't. Results are kept per commit on disk.
 
-The flow for a coordinator: merge into local main (all at once when there are
-several), wait for "Checks passed" on the tip, then Push All from the home page.
+The flow for a coordinator: an approved branch merges itself (see "Merging by
+itself"); wait for "Checks passed" on the tip, then Push All from the home page,
+or let Auto Push do it.
+
+## Merging by itself
+
+An approval means merge: there is no switch. When a merge request is approved,
+Merge merges the branch into the repo's local main itself, in the worktree that
+has main checked out, with `git merge --no-ff <branch tip> -m "Merge <branch>"`,
+the commit a coordinator makes. It then marks the request merged as `mr merged`
+does, so the events are `merged`, then `auto-merged <branch> <sha>`, then
+`main-tip` and the checks. Several approved ones go one at a time, oldest
+approval first, so each new tip is one clean step. A coordinator follows
+`auto-merged` with its own follow-up (tick the issue, clean up the stream).
+
+It doesn't merge, and says why on the request's page, under it on the home
+page, and once per reason as `auto-merge-held <branch> <reason>`, when:
+
+- the branch doesn't merge cleanly into main (the CONFLICTS state stands, and
+  the author is told as always);
+- main's worktree has uncommitted changes to tracked files, or a merge (rebase,
+  cherry-pick, revert) is in progress there, or nothing has main checked out;
+- main's checks or image build failed on its tip: no merge on a red main;
+- the request's base isn't main (a stacked request);
+- the approval came with a note, or a reviewer's comment from the approval's
+  round on has no reply: an Approve with a change request is a mis-tap;
+- the branch tip moved after the approval by anything but a merge of main into
+  it (one with nothing of its own in it, unless it resolved a conflict), or
+  the branch is gone.
+
+Every round (each minute) looks again, so it merges once the hold is gone and
+the request is still approved. If the merge fails halfway it is aborted
+(`git merge --abort`, only of its own merge), main is left as it was, and it
+isn't tried again until the branch or main moves. A coordinator's own
+`git merge` and `mr merged` work as before. Each round also starts again any
+stored merge request whose process is gone, so a code reload can't empty the
+list.
 
 ## Pushing by itself
 

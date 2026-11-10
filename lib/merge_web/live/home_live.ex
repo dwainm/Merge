@@ -9,7 +9,7 @@ defmodule MergeWeb.HomeLive do
   # How long a successful push's result stays up. A failure stays until the next push.
   @success_ms 10_000
 
-  alias Merge.{AutoPush, Checks, Drift, MergeRequest, Servers}
+  alias Merge.{AutoMerge, AutoPush, Checks, Drift, MergeRequest, Servers}
   import MergeWeb.MergeRequestComponents
 
   # The queue's tabs; it also follows the merge requests for this page.
@@ -23,6 +23,7 @@ defmodule MergeWeb.HomeLive do
       Phoenix.PubSub.subscribe(Merge.PubSub, Checks.topic())
       Phoenix.PubSub.subscribe(Merge.PubSub, Servers.topic())
       Phoenix.PubSub.subscribe(Merge.PubSub, AutoPush.topic())
+      Phoenix.PubSub.subscribe(Merge.PubSub, AutoMerge.topic())
       if Process.whereis(Merge.Watcher), do: Merge.Watcher.refresh()
     end
 
@@ -47,6 +48,8 @@ defmodule MergeWeb.HomeLive do
 
   def handle_info({:checks, _sha}, socket),
     do: {:noreply, socket |> load_checks() |> load_auto_push() |> load()}
+
+  def handle_info(:auto_merge, socket), do: {:noreply, load(socket)}
 
   def handle_info(:auto_push, socket),
     do: {:noreply, socket |> show_push(Drift.last_push()) |> load_auto_push()}
@@ -220,7 +223,14 @@ defmodule MergeWeb.HomeLive do
     main = socket.assigns[:drift][:main]
     pills = Map.new(done, &{&1.branch, Checks.for_merge_request(&1, main)})
     branches = MapSet.new(open ++ done, & &1.branch)
-    assign(socket, open: open, done: done, pills: pills, branches: branches)
+
+    assign(socket,
+      open: open,
+      done: done,
+      pills: pills,
+      branches: branches,
+      holds: AutoMerge.holds()
+    )
   end
 
   @impl true
@@ -258,6 +268,7 @@ defmodule MergeWeb.HomeLive do
         :if={@open != []}
         id="merge-requests"
         merge_requests={@open}
+        holds={@holds}
         queued={MapSet.new(@queue, & &1.branch)}
       />
 
@@ -665,6 +676,11 @@ defmodule MergeWeb.HomeLive do
   attr :id, :string, required: true
   attr :merge_requests, :list, required: true
   attr :pills, :map, default: %{}
+
+  attr :holds, :map,
+    default: %{},
+    doc: "what holds each approved branch (Merge.AutoMerge.holds/0)"
+
   attr :queued, :any, default: nil, doc: "queued branches; nil hides the queue button"
 
   defp mr_list(assigns) do
@@ -695,6 +711,7 @@ defmodule MergeWeb.HomeLive do
             <span :if={mr.merged} class="font-mono">in {mr.merged.short}</span>
             <span :if={mr.done_at}>{ago(mr.done_at)}</span>
           </div>
+          <.auto_merge_line :if={mr.status == :approved} mr={mr} hold={@holds[mr.branch]} />
         </.link>
         <.queue_button
           :if={@queued && mr.status in [:open, :in_progress]}
