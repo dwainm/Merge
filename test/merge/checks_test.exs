@@ -188,4 +188,16 @@ defmodule Merge.ChecksTest do
       assert :off = Checks.image_status("abc", server)
     end
   end
+
+  test "the newest commit's image decision is kept however many came before", c do
+    # On 10 Nov 2026 a tip whose sha sorted low ("380b…") lost its "not needed" the moment
+    # it was decided, and Auto Push waited on an image build that would never run.
+    server = checks(c, "sleep 60", "true")
+
+    for n <- 1..40 do
+      sha = GitRepo.commit!(c.repo, %{"N#{n}.md" => "#{n}\n"}, "N#{n}")
+      Checks.want(c.repo, sha, server)
+      assert Checks.image_status(sha, server) == :not_needed
+    end
+  end
 end

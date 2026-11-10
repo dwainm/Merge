@@ -75,10 +75,10 @@ defmodule Merge.AutoPushTest do
     other_sha = [checks_on: true, checks: %{sha: "0000000", ok: true}, image: :off]
 
     assert AutoPush.run(repo, at, failed) == {:hold, "checks failed: not pushing"}
-    assert {:wait, "waiting for the checks", _} = AutoPush.run(repo, at, running)
-    assert {:wait, "waiting for the checks", _} = AutoPush.run(repo, at, other_sha)
+    assert {:wait, "checks running", _} = AutoPush.run(repo, at, running)
+    assert {:wait, "checks haven't run yet", _} = AutoPush.run(repo, at, other_sha)
     assert AutoPush.run(repo, at, image_failed) == {:hold, "image build failed: not pushing"}
-    assert {:wait, "waiting for the image build", _} = AutoPush.run(repo, at, image_running)
+    assert {:wait, "image build running", _} = AutoPush.run(repo, at, image_running)
     assert {:hold, "no checks are set up: not pushing"} = AutoPush.run(repo, at, checks_on: false)
     assert origin_main(origin) == before
   end
@@ -111,7 +111,7 @@ defmodule Merge.AutoPushTest do
 
     assert AutoPush.run(repo, later(t0, 25), passed(new)) == {:due, later(t0, 39)}
     # The old tip's passed checks don't speak for the new one.
-    assert {:wait, "waiting for the checks", _} = AutoPush.run(repo, later(t0, 45), passed(tip))
+    assert {:wait, "checks haven't run yet", _} = AutoPush.run(repo, later(t0, 45), passed(tip))
     assert origin_main(origin) == before
   end
 
@@ -179,6 +179,12 @@ defmodule Merge.AutoPushTest do
     assert %{ok: false} = Drift.push(repo, tip)
     File.rm!(hook)
     assert %{ok: true} = AutoPush.run(repo, later(t0, 22), passed(tip))
+  end
+
+  test "the period is 5 minutes unless the flag says otherwise" do
+    Application.delete_env(:merge, :auto_push_ms)
+    assert AutoPush.period_ms() == 5 * 60_000
+    assert AutoPush.period_text() == "5 minutes"
   end
 
   test "the period reads like the flag" do

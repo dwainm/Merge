@@ -9,7 +9,7 @@ defmodule Merge.CLI do
   """
 
   @usage """
-  merge serve [--port N] [--repo PATH] [--check CMD] [--check-image CMD] [--auto-push-after 20m]
+  merge serve [--port N] [--repo PATH] [--check CMD] [--check-image CMD] [--auto-push-after 5m]
   merge mr open <branch> [--repo PATH] [--base BRANCH] [--title T] [--body B | --body-file F] [--groups F] [--as NAME]
   merge mr body <branch> (--body B | --body-file F) [--as NAME]   replaces the body in place, keeping the review
   merge mr wait <branch> [--as NAME]      returns on each comment or decision; run it again to keep listening

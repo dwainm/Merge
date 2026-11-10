@@ -30,18 +30,18 @@ defmodule MergeWeb.AutoPushToggleTest do
     Drift.refresh(repo)
     {:ok, view, _html} = live(conn, ~p"/")
 
-    assert has_element?(view, "#auto-push-toggle[aria-checked=false]", "Auto Push")
-    refute has_element?(view, "#auto-push-status")
+    assert has_element?(view, "#auto-push-toggle[aria-checked=false]")
+    assert has_element?(view, "#auto-push-status", "Auto Push off")
 
     view |> element("#auto-push-toggle") |> render_click()
     assert AutoPush.on?()
     assert has_element?(view, "#auto-push-toggle[aria-checked=true]")
     # The tests' server runs no checks: nothing is proven, so nothing goes.
-    assert has_element?(view, "#auto-push-status", "No checks are set up: not pushing")
+    assert has_element?(view, "#auto-push-status", "Auto Push: held")
 
     view |> element("#auto-push-toggle") |> render_click()
     refute AutoPush.on?()
-    refute has_element?(view, "#auto-push-status")
+    assert has_element?(view, "#auto-push-status", "Auto Push off")
   end
 
   test "without a store the toggle stays off", %{conn: conn} do

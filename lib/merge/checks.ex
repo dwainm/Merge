@@ -180,7 +180,15 @@ defmodule Merge.Checks do
       state
     else
       needed = Merge.ImagePaths.needed?(repo, sha)
-      needs = state.image_needed |> Map.put(sha, needed) |> Enum.take(-@keep) |> Map.new()
+      # A map has no order to trim by (a small one lists by key), so the commit just
+      # decided always stays and others make room.
+      needs =
+        state.image_needed
+        |> Map.delete(sha)
+        |> Enum.take(@keep - 1)
+        |> Map.new()
+        |> Map.put(sha, needed)
+
       %{state | image_needed: needs}
     end
   end

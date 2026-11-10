@@ -285,6 +285,7 @@ defmodule MergeWeb.HomeLive do
   attr :commit_images, :map, default: %{}, doc: "the image build of each commit ahead, by sha"
   attr :busy, :atom, default: nil
   attr :last_push, :map, default: nil
+
   defp drift(assigns) do
     ~H"""
     <section id="drift" class="mb-6 space-y-3">
@@ -442,23 +443,26 @@ defmodule MergeWeb.HomeLive do
   attr :on, :boolean, required: true
   attr :status, :any, required: true
 
-  # In the header: the toggle, and beside it while main is ahead, when it pushes or what
-  # holds it, in a few words that fit a phone (the whole of it on hover).
+  # In the header, one line: the switch, and the label that is also the countdown,
+  # "Auto Push in 4:32", ticked down each second in the browser from the due time; or
+  # at most two plain words when it isn't counting ("Auto Push: held"), since the card
+  # below says why. Just "Auto Push" when main matches GitHub. The reason is on hover.
   defp auto_push(assigns) do
     assigns =
       assign(assigns,
-        text: AutoPush.short_text(assigns.status),
+        label: auto_label(assigns.on, assigns.status),
         title: AutoPush.text(assigns.status),
         period: AutoPush.period_text()
       )
 
     ~H"""
-    <div id="auto-push" class="flex min-w-0 items-center justify-end gap-2 text-sm">
+    <div id="auto-push" class="flex min-w-0 items-center justify-end text-sm">
       <button
         id="auto-push-toggle"
         type="button"
         role="switch"
         aria-checked={to_string(@on)}
+        aria-label="Auto Push"
         phx-click="auto_push"
         phx-value-on={to_string(not @on)}
         data-confirm={
@@ -467,11 +471,13 @@ defmodule MergeWeb.HomeLive do
               "Turn on Auto Push? main goes to GitHub by itself once its tip has been still for #{@period}, with the checks passed on it and a dry run that lands. Every new tip starts the #{@period} again."
         }
         title={
-          if @on,
-            do: "Auto Push is on: main pushes itself after #{@period} still",
-            else: "Auto Push is off"
+          @title ||
+            if(@on,
+              do: "Auto Push is on: main pushes itself after #{@period} still",
+              else: "Auto Push is off"
+            )
         }
-        class="group inline-flex shrink-0 items-center gap-2 rounded-md py-1 font-medium whitespace-nowrap text-(--text-2) transition hover:text-(--text)"
+        class="group inline-flex min-w-0 items-center gap-2 rounded-md py-1 transition"
       >
         <span class={[
           "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full ring-1 transition-colors duration-200",
@@ -485,24 +491,71 @@ defmodule MergeWeb.HomeLive do
             if(@on, do: "translate-x-4.5", else: "translate-x-0.5")
           ]} />
         </span>
-        Auto Push
+        <%= case @status do %>
+          <% {:due, at} -> %>
+            <span
+              id="auto-push-countdown"
+              phx-hook=".AutoPushCountdown"
+              phx-update="ignore"
+              data-due={DateTime.to_unix(at, :millisecond)}
+              class="min-w-0 truncate font-medium whitespace-nowrap text-(--ok-text) tabular-nums"
+            >
+              {countdown(at)}
+            </span>
+          <% _ -> %>
+            <span
+              id="auto-push-status"
+              class={[
+                "min-w-0 truncate font-medium whitespace-nowrap transition-colors group-hover:text-(--text)",
+                auto_tone(@on, @status)
+              ]}
+            >
+              {@label}
+            </span>
+        <% end %>
       </button>
-      <span
-        :if={@on and @text}
-        id="auto-push-status"
-        title={@title}
-        class={["min-w-0 truncate text-xs sm:text-sm", auto_tone(@status)]}
-      >
-        {@text}
-      </span>
+      <script :type={Phoenix.LiveView.ColocatedHook} name=".AutoPushCountdown">
+        // Counts down to data-due each second; the server only says when it changes.
+        export default {
+          mounted() {
+            this.tick()
+            this.timer = setInterval(() => this.tick(), 1000)
+          },
+          updated() { this.tick() },
+          destroyed() { clearInterval(this.timer) },
+          tick() {
+            const left = Math.max(0, Math.round((Number(this.el.dataset.due) - Date.now()) / 1000))
+            const m = Math.floor(left / 60)
+            const s = String(left % 60).padStart(2, "0")
+            this.el.textContent = left === 0 ? "Auto Push: pushing" : `Auto Push in ${m}:${s}`
+          }
+        }
+      </script>
     </div>
     """
   end
 
-  defp auto_tone(:ready), do: "font-medium text-(--ok-text)"
-  defp auto_tone({:due, _}), do: "font-medium text-(--ok-text)"
-  defp auto_tone({:hold, _}), do: "font-medium text-(--bad-text)"
-  defp auto_tone(_), do: "text-(--text-muted)"
+  # Only what the card below doesn't say: two plain words at most. The reason is in
+  # the card (and on hover).
+  defp auto_label(false, _status), do: "Auto Push off"
+  defp auto_label(true, :ready), do: "Auto Push: pushing"
+  defp auto_label(true, {:wait, "checks running", _due}), do: "Auto Push: checks running"
+  defp auto_label(true, {:wait, _reason, _due}), do: "Auto Push: waiting"
+  defp auto_label(true, {:hold, _reason}), do: "Auto Push: held"
+  defp auto_label(true, _status), do: "Auto Push"
+
+  # Minutes and seconds left, as the hook will say it a second later.
+  defp countdown(at) do
+    left = max(DateTime.diff(at, DateTime.utc_now()), 0)
+
+    "Auto Push in #{div(left, 60)}:#{String.pad_leading(Integer.to_string(rem(left, 60)), 2, "0")}"
+  end
+
+  defp auto_tone(false, _), do: "text-(--text-muted)"
+  defp auto_tone(true, :ready), do: "text-(--ok-text)"
+  defp auto_tone(true, {:hold, _}), do: "text-(--bad-text)"
+  defp auto_tone(true, {:wait, _, _}), do: "text-(--warn-text)"
+  defp auto_tone(true, _), do: "text-(--text-2)"
 
   attr :result, :map, required: true
 

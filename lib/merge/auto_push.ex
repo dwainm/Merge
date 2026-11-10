@@ -5,7 +5,7 @@ defmodule Merge.AutoPush do
   When local main is ahead of origin/main, main's tip goes to GitHub (through
   `Merge.Drift.push/2`, as Push All does) once all of these hold: the toggle is
   on; the tip has not moved for the period (`merge serve --auto-push-after`,
-  default 20 minutes; it starts again at every new tip, and when the toggle is
+  default 5 minutes; it starts again at every new tip, and when the toggle is
   turned on); the checks passed on that exact tip; its image build passed or
   was not needed; GitHub has nothing main lacks, and the dry run says the push
   will land. Anything else holds it, and `status/2` says what.
@@ -24,7 +24,7 @@ defmodule Merge.AutoPush do
 
   alias Merge.{Checks, Drift, Events, Git, Store}
 
-  @default_ms 20 * 60_000
+  @default_ms 5 * 60_000
   # The user's clock: Africa/Johannesburg, UTC+2 all year (no daylight saving).
   @local_offset 2 * 3600
 
@@ -46,7 +46,7 @@ defmodule Merge.AutoPush do
     end
   end
 
-  @doc "The period as the page says it: 20 minutes, 1 minute, 90 seconds."
+  @doc "The period as the page says it: 5 minutes, 1 minute, 90 seconds."
   def period_text(ms \\ period_ms()) do
     cond do
       rem(ms, 60_000) == 0 -> count(div(ms, 60_000), "minute")
@@ -187,13 +187,13 @@ defmodule Merge.AutoPush do
         {:hold, "checks failed: not pushing"}
 
       not match?(%{ok: true, sha: sha} when sha == drift.main, checks) ->
-        {:wait, "waiting for the checks", due}
+        {:wait, "checks " <> pending(checks, "haven't"), due}
 
       match?(%{ok: false}, image) ->
         {:hold, "image build failed: not pushing"}
 
       not (image in [:off, :not_needed] or match?(%{ok: true}, image)) ->
-        {:wait, "waiting for the image build", due}
+        {:wait, "image build " <> pending(image, "hasn't"), due}
 
       drift[:landing] != :lands ->
         {:hold, landing_hold(drift[:landing])}
@@ -205,6 +205,11 @@ defmodule Merge.AutoPush do
         :ready
     end
   end
+
+  # In the card's words for the same state (`MergeWeb.MergeRequestComponents.checks_line/1`).
+  defp pending({:running, _}, _has), do: "running"
+  defp pending({:queued, _}, _has), do: "queued"
+  defp pending(_, has), do: has <> " run yet"
 
   defp landing_hold({:behind, _}), do: "GitHub has commits you don't: not pushing"
   defp landing_hold({:refused, _}), do: "the dry run was refused: not pushing"

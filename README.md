@@ -10,7 +10,7 @@ No GitHub and no database: each merge request is a process, gone when the server
 
 `bin/merge` works from any directory; link it onto your PATH as `merge`.
 
-    merge serve [--port N] [--repo PATH] [--check CMD] [--check-image CMD] [--auto-push-after 20m]
+    merge serve [--port N] [--repo PATH] [--check CMD] [--check-image CMD] [--auto-push-after 5m]
         merge serve                     # prints http://localhost:<PORT> and https://merge.dev.dayofplenty.com
 
     merge mr open <branch> [--repo PATH] [--base BRANCH] [--title T] [--body B | --body-file F] [--groups F] [--as NAME]
@@ -160,15 +160,16 @@ restart (`~/.merge/auto_push.term`). When local main is ahead of GitHub, it push
 tip, as Push All does, once all of these hold:
 
 - the toggle is on;
-- the tip hasn't moved for 20 minutes (`serve --auto-push-after 20m`; `90s` and `1h`
-  work too). Every new tip starts the 20 minutes again, and so does turning the toggle on;
+- the tip hasn't moved for 5 minutes (`serve --auto-push-after 5m`; `90s` and `1h`
+  work too). Every new tip starts the 5 minutes again, and so does turning the toggle on;
 - the checks passed on that exact tip (without a `--check` nothing is proven, so it never
   pushes), and its image build passed or wasn't needed;
 - GitHub has nothing main lacks, and the dry run says the push will land.
 
-Beside the toggle the page says when, "Pushes itself at 14:32" (Johannesburg time), or
-what holds it: "Waiting for the checks", "Checks failed: not pushing", "GitHub has commits
-you don't: not pushing". Right before it pushes it reads everything again (the drift, a
+The toggle's label counts down, "Auto Push in 4:32", ticking in the browser. When it
+isn't counting it says only what the card below doesn't: "Auto Push: checks running",
+"Auto Push: waiting", "Auto Push: held" (the card says why; so does a hover), or "Auto
+Push off". Just "Auto Push" when main matches GitHub. Right before it pushes it reads everything again (the drift, a
 new dry run, the checks of that sha), and the sha it judged is the one that goes, so a
 tip that moves meanwhile isn't pushed. A push is judged as a hand push is, so `pushed` or
 `push-failed` follows, and `auto-pushed` with it when it went. A failed auto-push is not
