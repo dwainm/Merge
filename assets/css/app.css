@@ -130,6 +130,8 @@
   --warn-bg: #fff8c5;
   --warn-border: #d4a72c;
   --warn-text: #7d4e00;
+  /* A server that is not running (no server, not answering): orange. */
+  --stopped-text: #bc4c00;
   --bad-bg: #ffebe9;
   --bad-border: #ff8182;
   --bad-text: #a40e26;
@@ -175,6 +177,7 @@
     --warn-bg: #272115;
     --warn-border: #9e6a03;
     --warn-text: #e3b341;
+    --stopped-text: #db6d28;
     --bad-bg: #25171c;
     --bad-border: #da3633;
     --bad-text: #ff7b72;

@@ -365,9 +365,9 @@ defmodule MergeWeb.MergeRequestComponents do
 
   @doc """
   A tree's server: its rack, and its URL to tap or "no server". The rack is
-  blue when the server answers, amber when its pages error, purple when it
-  doesn't answer (the reason on hover), grey and dashed with none, and pink and
-  blinking while a Restart, Reseed or Turn off runs (`rack/1`). Tapping the rack
+  blue when the server answers, red with a cross when its pages error, orange
+  when it doesn't answer (the reason on hover) and orange and dashed with none,
+  and pink and blinking while a Restart, Reseed or Turn off runs (`rack/1`). Tapping the rack
   opens the server sheet.
   """
   def server(assigns) do
@@ -402,14 +402,16 @@ defmodule MergeWeb.MergeRequestComponents do
   attr :running, :boolean, default: false
   attr :class, :string, default: "size-4"
 
-  # A small rack of two units, drawn in currentColor so one colour sets it. The
-  # colours keep clear of the checks' green and red, and each state also draws
-  # differently, for someone who can't tell the colours apart:
+  # A small rack of two units, drawn in currentColor so one colour sets it: blue
+  # when it runs, orange when it doesn't. Up is blue, not green, so it never
+  # reads as checks passed; an error is red like a failed check, but drawn as a
+  # rack with a cross. Each state also draws differently, for someone who
+  # can't tell the colours apart:
   #
   #   up             blue    both lights lit
-  #   error          amber   top light lit, a cross for the bottom one
-  #   not answering  purple  both lights out (rings)
-  #   off            grey    dashed outline, no lights
+  #   error          red     top light lit, a cross for the bottom one
+  #   not answering  orange  both lights out (rings)
+  #   off            orange  dashed outline, no lights
   #   running        pink    both lights lit, blinking in turn
   defp rack(assigns) do
     assigns = assign(assigns, :state, rack_state(assigns.status, assigns.running))
@@ -462,9 +464,9 @@ defmodule MergeWeb.MergeRequestComponents do
   # The rack's colour, which the sheet's status line wears too.
   defp rack_colour(:running), do: "text-(--pending-text)"
   defp rack_colour(:up), do: "text-(--info-text)"
-  defp rack_colour(:error), do: "text-(--warn-text)"
-  defp rack_colour(:not_answering), do: "text-(--merged-text)"
-  defp rack_colour(:off), do: "text-(--text-faint)"
+  defp rack_colour(:error), do: "text-(--bad-text)"
+  defp rack_colour(:not_answering), do: "text-(--stopped-text)"
+  defp rack_colour(:off), do: "text-(--stopped-text)"
 
   defp rack_state(_status, true), do: :running
   defp rack_state(status, false) when status in [:up, :error, :not_answering], do: status

@@ -41,22 +41,22 @@ defmodule MergeWeb.ServerRackTest do
     assert r.class =~ "text-(--info-text)"
   end
 
-  test "answering with an error: amber, one light and a cross, the reason on hover" do
+  test "answering with an error: red, one light and a cross, the reason on hover" do
     r = rack(tree(:error, "CompileError at GET /"))
     assert %{state: "error", title: "Error: CompileError at GET /", lights: 1, marks: 2} = r
-    assert r.class =~ "text-(--warn-text)"
+    assert r.class =~ "text-(--bad-text)"
   end
 
-  test "not answering: purple, both lights out" do
+  test "not answering: orange, both lights out" do
     r = rack(tree(:not_answering, "not answering"))
     assert %{state: "not_answering", title: "Not answering", lights: 0, rings: 2} = r
-    assert r.class =~ "text-(--merged-text)"
+    assert r.class =~ "text-(--stopped-text)"
   end
 
-  test "nothing listening: grey, dashed, no lights" do
+  test "nothing listening: orange, dashed, no lights" do
     r = rack(tree(:off))
     assert %{state: "off", title: "No server", lights: 0, rings: 0, dashed: 1, marks: 0} = r
-    assert r.class =~ "text-(--text-faint)"
+    assert r.class =~ "text-(--stopped-text)"
   end
 
   test "an action running: pink, blinking, the action on hover" do
@@ -66,17 +66,17 @@ defmodule MergeWeb.ServerRackTest do
     assert r.class =~ "text-(--pending-text)"
   end
 
-  test "no state wears the checks' green or red" do
+  test "no state wears the checks' green, and only an error their red" do
     running = %{state: :running, action: :off, name: "app"}
 
     for {status, run} <- [up: nil, error: nil, not_answering: nil, off: nil, up: running] do
       class = rack(tree(status), run).class
       refute class =~ "--ok-"
-      refute class =~ "--bad-"
+      assert class =~ "--bad-" == (status == :error and run == nil)
     end
   end
 
-  # The sheet's status line wears its rack's colour, not the old red.
+  # The sheet's status line wears its rack's colour.
   defp sheet_status(tree, run \\ nil) do
     runs = if run, do: %{tree.path => run}, else: %{}
 
@@ -90,12 +90,11 @@ defmodule MergeWeb.ServerRackTest do
 
   test "the sheet's status line takes its rack's colour" do
     assert sheet_status(tree(:up)) =~ "text-(--info-text)"
-    assert sheet_status(tree(:error, "CompileError")) =~ "text-(--warn-text)"
-    assert sheet_status(tree(:not_answering, "not answering")) =~ "text-(--merged-text)"
-    assert sheet_status(tree(:off)) =~ "text-(--text-faint)"
+    assert sheet_status(tree(:error, "CompileError")) =~ "text-(--bad-text)"
+    assert sheet_status(tree(:not_answering, "not answering")) =~ "text-(--stopped-text)"
+    assert sheet_status(tree(:off)) =~ "text-(--stopped-text)"
 
     running = %{state: :running, action: :reseed, name: "app", output: []}
     assert sheet_status(tree(:up), running) =~ "text-(--pending-text)"
-    refute sheet_status(tree(:error, "CompileError")) =~ "--bad-"
   end
 end
