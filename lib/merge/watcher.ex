@@ -5,8 +5,11 @@ defmodule Merge.Watcher do
   marks merge requests merged when their branch has landed on main, and
   broadcasts the trees and their servers (`Merge.Servers`), and lets
   `Merge.AutoPush` push main when it is due, with a timer for the moment it
-  falls due between rounds. `refresh/0` does the same at once (the home page
-  asks on load).
+  falls due between rounds, and lets `Merge.AutoMerge` merge approved branches
+  into main (after each round, and on each approval): all in this one process,
+  so one merge runs at a time. Each round first starts any stored merge request
+  whose process is gone (`Merge.MergeRequest.restore_missing/0`). `refresh/0` does the round
+  at once (the home page asks on load).
   """
 
   use GenServer
@@ -21,6 +24,12 @@ defmodule Merge.Watcher do
   @doc "Sets the timer for the auto-push's moment again (the toggle moved)."
   def schedule_auto_push do
     if Process.whereis(__MODULE__), do: GenServer.cast(__MODULE__, :schedule_auto_push)
+    :ok
+  end
+
+  @doc "Lets Auto Merge look now, at `branch`'s merge request or every approved one."
+  def auto_merge(branch \\ nil) do
+    if Process.whereis(__MODULE__), do: GenServer.cast(__MODULE__, {:auto_merge, branch})
     :ok
   end
 
@@ -54,6 +63,12 @@ defmodule Merge.Watcher do
 
   def handle_cast(:schedule_auto_push, state), do: {:noreply, schedule(state)}
 
+  # A merge moves main, so the auto-push's timer is set again.
+  def handle_cast({:auto_merge, branch}, state) do
+    Merge.AutoMerge.run(branch)
+    {:noreply, schedule(state)}
+  end
+
   # One timer at most, for when main's tip falls due (the state is its ref).
   defp schedule(timer) do
     if is_reference(timer), do: Process.cancel_timer(timer)
@@ -72,6 +87,8 @@ defmodule Merge.Watcher do
 
   @doc "One round: fetch, drift, merges, servers."
   def run do
+    # A merge request whose process died comes back from its file first.
+    MergeRequest.restore_missing()
     mrs = MergeRequest.list()
 
     [Drift.repo() | Enum.map(mrs, &MergeRequest.git_repo/1)]
@@ -89,6 +106,9 @@ defmodule Merge.Watcher do
       MergeRequest.check_branch(mr.branch)
       MergeRequest.check_merged(mr.branch)
     end)
+
+    # After the branches are looked at, so a conflict that is gone is gone here too.
+    Merge.AutoMerge.run()
 
     Merge.Servers.refresh()
   end

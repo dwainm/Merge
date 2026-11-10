@@ -3,6 +3,37 @@ defmodule MergeWeb.MergeRequestComponents do
 
   use MergeWeb, :html
 
+  attr :mr, :map, required: true
+  attr :hold, :map, default: nil, doc: "what holds it, from Merge.AutoMerge.holds/0"
+  attr :class, :string, default: "mt-1.5 text-xs"
+
+  @doc """
+  An approved merge request's line about Auto Merge: what holds it, in plain
+  words, or that it is going into main.
+  """
+  def auto_merge_line(assigns) do
+    ~H"""
+    <p
+      id={"auto-merge-#{@mr.branch}"}
+      class={[
+        "flex items-start gap-1.5",
+        if(@hold, do: "text-(--warn-text)", else: "text-(--ok-text)"),
+        @class
+      ]}
+      title={@hold && "Held since #{Calendar.strftime(@hold.at, "%H:%M")} UTC"}
+    >
+      <.icon
+        name={if @hold, do: "hero-pause-circle-mini", else: "hero-arrow-path-mini"}
+        class={["size-4 shrink-0", !@hold && "animate-spin [animation-duration:2s]"]}
+      />
+      <span :if={@hold}>
+        <span class="font-medium">Not merging:</span> {Merge.AutoMerge.text(@hold.reason)}
+      </span>
+      <span :if={!@hold}>Merging into main</span>
+    </p>
+    """
+  end
+
   attr :status, :atom, required: true
   attr :merged, :map, default: nil, doc: "a merged merge request's merge commit"
 

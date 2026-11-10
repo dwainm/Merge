@@ -69,6 +69,25 @@ defmodule Merge.Store do
     end
   end
 
+  @doc "The branches that have a stored merge request, read from the file names alone."
+  def branches do
+    case dir() && File.ls(dir()) do
+      {:ok, files} ->
+        for file <- files,
+            Path.extname(file) == ".term",
+            {:ok, branch} <- [Base.url_decode64(Path.rootname(file), padding: false)],
+            do: branch
+
+      _ ->
+        []
+    end
+  end
+
+  @doc "One stored merge request's state, or nil."
+  def get(branch) do
+    with dir when is_binary(dir) <- dir(), do: read(path(dir, branch))
+  end
+
   defp read(file) do
     file |> File.read!() |> :erlang.binary_to_term()
   rescue

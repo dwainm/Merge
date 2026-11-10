@@ -8,7 +8,7 @@ defmodule MergeWeb.MergeRequestLive do
 
   use MergeWeb, :live_view
 
-  alias Merge.{Checks, Drift, Git, Groups, MergeRequest, Servers}
+  alias Merge.{AutoMerge, Checks, Drift, Git, Groups, MergeRequest, Servers}
   import MergeWeb.MergeRequestComponents
 
   # The queue's tabs. A tab dropping out never moves this page.
@@ -23,6 +23,7 @@ defmodule MergeWeb.MergeRequestLive do
       Phoenix.PubSub.subscribe(Merge.PubSub, MergeRequest.topic(branch))
       Phoenix.PubSub.subscribe(Merge.PubSub, Checks.topic())
       Phoenix.PubSub.subscribe(Merge.PubSub, Servers.topic())
+      Phoenix.PubSub.subscribe(Merge.PubSub, AutoMerge.topic())
     end
 
     mr =
@@ -36,7 +37,8 @@ defmodule MergeWeb.MergeRequestLive do
      |> assign(branch: branch, mr: mr, picked: nil, page_title: (mr && mr.title) || branch)
      |> assign(tree: mr && Servers.tree_for(mr, Servers.read()))
      |> assign(line_form: blank_form(:line), review_form: blank_form(:review))
-     |> assign(dialog: nil, dialog_error: nil)}
+     |> assign(dialog: nil, dialog_error: nil)
+     |> assign(hold: AutoMerge.hold_entry(branch))}
   end
 
   @impl true
@@ -61,6 +63,9 @@ defmodule MergeWeb.MergeRequestLive do
 
   # For the queue's tabs (MergeWeb.QueueHook); this page follows its own topic.
   def handle_info(:merge_requests_changed, socket), do: {:noreply, socket}
+
+  def handle_info(:auto_merge, socket),
+    do: {:noreply, assign(socket, hold: AutoMerge.hold_entry(socket.assigns.branch))}
 
   def handle_info({:merge_request, mr}, socket) do
     {:noreply, socket |> assign(mr: mr, page_title: mr.title) |> load_files()}
@@ -449,6 +454,13 @@ defmodule MergeWeb.MergeRequestLive do
           }
         </script>
       </header>
+
+      <.auto_merge_line
+        :if={@mr.status == :approved}
+        mr={@mr}
+        hold={@hold}
+        class="mb-4 rounded-lg border border-(--border) bg-(--surface) px-3 py-2 text-sm"
+      />
 
       <div
         :if={not MergeRequest.done?(@mr) and match?(%{result: {:conflicts, _}}, @mr[:merge_check])}

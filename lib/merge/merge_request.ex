@@ -154,6 +154,27 @@ defmodule Merge.MergeRequest do
     end)
   end
 
+  @doc """
+  Starts the stored merge requests that aren't running: one whose process
+  died (a code reload can stop them all at once) comes back from its file.
+  Reads only the files of the missing ones. Returns how many it started.
+  """
+  def restore_missing do
+    running = MapSet.new(Registry.select(Merge.Registry, [{{:"$1", :_, :_}, [], [:"$1"]}]))
+
+    Merge.Store.branches()
+    |> Enum.reject(&MapSet.member?(running, &1))
+    |> Enum.count(fn branch ->
+      with %{branch: ^branch} = state <- Merge.Store.get(branch),
+           {:ok, _} <-
+             DynamicSupervisor.start_child(Merge.MergeRequests, {__MODULE__, {:restore, state}}) do
+        true
+      else
+        _ -> false
+      end
+    end)
+  end
+
   @doc "Every merge request: the open ones oldest first, then the done ones, latest first."
   def list do
     Merge.Registry
@@ -582,6 +603,8 @@ defmodule Merge.MergeRequest do
       Events.emit(event, state.branch, "at #{Events.short(state.head)} #{by}#{body}")
 
       state = changed(tell_waiters(state))
+      # Auto Merge looks at it in the watcher, once this call is done.
+      if verdict == :approved, do: Merge.Watcher.auto_merge(state.branch)
       {:reply, {:ok, decision}, state}
     end
   end
