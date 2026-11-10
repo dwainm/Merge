@@ -364,24 +364,25 @@ defmodule MergeWeb.MergeRequestComponents do
   attr :class, :string, default: nil
 
   @doc """
-  A tree's server: its dot, and its URL to tap or "no server". The dot is green
-  when the server answers, red when its pages error or it doesn't answer (the
-  reason on hover), grey with none, and pulses while a Restart, Reseed or Turn
-  off runs. Tapping the dot opens the server sheet.
+  A tree's server: its rack, and its URL to tap or "no server". The rack is
+  blue when the server answers, amber when its pages error, purple when it
+  doesn't answer (the reason on hover), grey and dashed with none, and pink and
+  blinking while a Restart, Reseed or Turn off runs (`rack/1`). Tapping the rack
+  opens the server sheet.
   """
   def server(assigns) do
     ~H"""
     <span id={@id} class={["inline-flex min-w-0 items-center gap-1.5", @class]}>
       <button
         type="button"
-        id={"dot-" <> dom_id(@tree.path)}
+        id={"rack-" <> dom_id(@tree.path)}
         phx-click="server_open"
         phx-value-path={@tree.path}
-        title={status_text(@tree)}
-        aria-label={"#{@tree.name}'s server: #{status_text(@tree)}"}
-        class="-m-1.5 shrink-0 rounded-full p-1.5 transition hover:bg-(--surface-2) active:scale-90"
+        title={rack_title(@tree, @run)}
+        aria-label={"#{@tree.name}'s server: #{rack_title(@tree, @run)}"}
+        class="-m-1 shrink-0 rounded-md p-1 transition hover:bg-(--surface-2) active:scale-90"
       >
-        <.dot status={@tree.status} running={running?(@run)} />
+        <.rack status={@tree.status} running={running?(@run)} />
       </button>
       <a
         :if={@tree.url}
@@ -399,29 +400,85 @@ defmodule MergeWeb.MergeRequestComponents do
 
   attr :status, :atom, required: true
   attr :running, :boolean, default: false
-  attr :class, :string, default: "size-2.5"
+  attr :class, :string, default: "size-4"
 
-  defp dot(assigns) do
+  # A small rack of two units, drawn in currentColor so one colour sets it. The
+  # colours keep clear of the checks' green and red, and each state also draws
+  # differently, for someone who can't tell the colours apart:
+  #
+  #   up             blue    both lights lit
+  #   error          amber   top light lit, a cross for the bottom one
+  #   not answering  purple  both lights out (rings)
+  #   off            grey    dashed outline, no lights
+  #   running        pink    both lights lit, blinking in turn
+  defp rack(assigns) do
+    assigns = assign(assigns, :state, rack_state(assigns.status, assigns.running))
+
     ~H"""
-    <span
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
       aria-hidden="true"
+      data-state={@state}
       class={[
-        "block rounded-full",
+        "rack block shrink-0",
         @class,
-        case @status do
-          :up -> "bg-(--ok-solid)"
-          :off -> "bg-(--text-faint) opacity-50"
-          _ -> "bg-(--bad-text)"
-        end,
-        @running && "animate-pulse ring-4 ring-(--info-bg)"
+        case @state do
+          :running -> "rack-running text-(--pending-text)"
+          :up -> "text-(--info-text)"
+          :error -> "text-(--warn-text)"
+          :not_answering -> "text-(--merged-text)"
+          :off -> "text-(--text-faint)"
+        end
       ]}
-    ></span>
+    >
+      <g
+        stroke="currentColor"
+        stroke-width="1.5"
+        stroke-dasharray={if(@state == :off, do: "2.2 1.6")}
+      >
+        <rect x="1.75" y="1.75" width="12.5" height="5" rx="1.25" />
+        <rect x="1.75" y="9.25" width="12.5" height="5" rx="1.25" />
+      </g>
+      <g :if={@state != :off} stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+        <path d="M8.5 4.25h3M8.5 11.75h3" />
+      </g>
+      <%= case @state do %>
+        <% :off -> %>
+        <% :error -> %>
+          <circle cx="4.75" cy="4.25" r="1.25" fill="currentColor" />
+          <path
+            d="M3.85 10.85l1.8 1.8M5.65 10.85l-1.8 1.8"
+            stroke="currentColor"
+            stroke-width="1.25"
+            stroke-linecap="round"
+          />
+        <% :not_answering -> %>
+          <circle cx="4.75" cy="4.25" r="1" stroke="currentColor" stroke-width="1" />
+          <circle cx="4.75" cy="11.75" r="1" stroke="currentColor" stroke-width="1" />
+        <% _lit -> %>
+          <circle class="rack-light" cx="4.75" cy="4.25" r="1.25" fill="currentColor" />
+          <circle class="rack-light" cx="4.75" cy="11.75" r="1.25" fill="currentColor" />
+      <% end %>
+    </svg>
     """
   end
 
+  defp rack_state(_status, true), do: :running
+  defp rack_state(status, false) when status in [:up, :error, :not_answering], do: status
+  defp rack_state(_status, false), do: :off
+
   defp running?(run), do: match?(%{state: :running}, run)
 
-  @doc "What the dot says: Up, Error: CompileError, Not answering, No server."
+  # The rack's hover: the status, or the action while one runs.
+  defp rack_title(tree, %{state: :running, action: action}) do
+    verb = %{restart: "Restarting", reseed: "Reseeding", off: "Turning off"}[action]
+    "#{verb}… (#{status_text(tree)})"
+  end
+
+  defp rack_title(tree, _run), do: status_text(tree)
+
+  @doc "What the rack says: Up, Error: CompileError, Not answering, No server."
   def status_text(%{status: :up}), do: "Up"
   def status_text(%{status: :error, reason: reason}), do: "Error: #{reason}"
   def status_text(%{status: :not_answering}), do: "Not answering"
@@ -435,7 +492,7 @@ defmodule MergeWeb.MergeRequestComponents do
   attr :error, :string, default: nil
 
   @doc """
-  The sheet a dot opens: the tree, its status and reason, the last lines of its
+  The sheet a rack opens: the tree, its status and reason, the last lines of its
   log, and Restart, Reseed, Turn off. Each asks once, then runs the tree's
   `bin/dev`; the sheet says how it went.
   """
@@ -486,7 +543,7 @@ defmodule MergeWeb.MergeRequestComponents do
           </dd>
           <dt class="text-(--text-muted)">Status</dt>
           <dd id="server-sheet-status" class="flex min-w-0 items-center gap-2">
-            <.dot status={@tree.status} running={running?(@run)} class="size-2.5 shrink-0" />
+            <.rack status={@tree.status} running={running?(@run)} />
             <span class={[
               "min-w-0 break-words",
               @tree.status in [:error, :not_answering] && "text-(--bad-text)"

@@ -272,3 +272,13 @@
 @media (prefers-reduced-motion: reduce) {
   .review-dialog[open], .review-dialog::backdrop { animation: none; }
 }
+
+/* A tree's server rack (MergeRequestComponents.rack/1): while a Restart,
+   Reseed or Turn off runs, its two lights blink in turn. */
+.rack-running .rack-light { animation: rack-blink 1.4s ease-in-out infinite; }
+.rack-running .rack-light + .rack-light { animation-delay: 0.7s; }
+@keyframes rack-blink { 50% { opacity: 0.2; } }
+@media (prefers-reduced-motion: reduce) {
+  .rack-running .rack-light { animation: none; }
+  .rack-running .rack-light + .rack-light { opacity: 0.3; }
+}
