@@ -8,6 +8,10 @@ defmodule Mix.Tasks.Merge.Serve do
   When another server (the systemd service, usually) already holds the tailnet
   name, this one runs on localhost only and leaves `~/.merge/url` and the
   stored merge requests to it: its own are kept in memory only.
+
+  `MERGE_HOME=DIR` puts everything this server keeps under `DIR` instead of
+  `~/.merge` (merge requests, events, the checks' checkout, the auto-push
+  toggle, `url`), and stays on localhost: a test server that remembers.
   """
 
   use Mix.Task
@@ -16,18 +20,44 @@ defmodule Mix.Tasks.Merge.Serve do
   def run(args) do
     {opts, _, _} =
       OptionParser.parse(args,
-        strict: [port: :integer, repo: :string, check: :string, check_image: :string]
+        strict: [
+          port: :integer,
+          repo: :string,
+          check: :string,
+          check_image: :string,
+          auto_push_after: :string
+        ]
       )
 
     if port = opts[:port], do: System.put_env("PORT", Integer.to_string(port))
     # Decided before the app starts, since starting it restores the store.
     Mix.Task.run("app.config")
 
-    # Beside the service: its own checkouts for the checks, so neither moves the other's.
-    if match?({:held, _}, MergeWeb.DevTunnel.held_by()) do
-      Application.put_env(:merge, :store_dir, nil)
-      checks = Path.join([System.user_home!(), ".merge", "checks-#{System.get_env("PORT")}"])
-      Application.put_env(:merge, :checks_dir, checks)
+    home = System.get_env("MERGE_HOME")
+
+    cond do
+      # Everything it keeps in a home of its own, far from the service's ~/.merge.
+      home not in [nil, ""] ->
+        home = Path.expand(home)
+        Application.put_env(:merge, :store_dir, Path.join(home, "merge_requests"))
+        Application.put_env(:merge, :checks_dir, Path.join(home, "checks"))
+
+      # Beside the service: its own checkouts for the checks, so neither moves the other's.
+      match?({:held, _}, MergeWeb.DevTunnel.held_by()) ->
+        Application.put_env(:merge, :store_dir, nil)
+        checks = Path.join([System.user_home!(), ".merge", "checks-#{System.get_env("PORT")}"])
+        Application.put_env(:merge, :checks_dir, checks)
+
+      true ->
+        :ok
+    end
+
+    # How long main's tip stays still before Auto Push sends it (when it is on).
+    with after_text when is_binary(after_text) <- opts[:auto_push_after] do
+      case Merge.AutoPush.parse_period(after_text) do
+        {:ok, ms} -> Application.put_env(:merge, :auto_push_ms, ms)
+        :error -> Mix.raise("--auto-push-after takes a period like 20m, 90s or 1h")
+      end
     end
 
     # The checks a new tip of main must pass before Push (`sh -c`, in a checkout of its own).
@@ -45,7 +75,10 @@ defmodule Mix.Tasks.Merge.Serve do
     local = MergeWeb.base_url(:local)
     IO.puts("merge: #{local}")
 
-    case MergeWeb.DevTunnel.publish() do
+    # A server with a home of its own is a test server: it never takes the tailnet name.
+    tunnel = if Merge.CLI.home?(), do: :none, else: MergeWeb.DevTunnel.publish()
+
+    case tunnel do
       {:ok, url} ->
         IO.puts("Tailnet:  #{url}")
         write_url(local)

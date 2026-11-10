@@ -9,7 +9,7 @@ defmodule Merge.CLI do
   """
 
   @usage """
-  merge serve [--port N] [--repo PATH] [--check CMD] [--check-image CMD]
+  merge serve [--port N] [--repo PATH] [--check CMD] [--check-image CMD] [--auto-push-after 20m]
   merge mr open <branch> [--repo PATH] [--base BRANCH] [--title T] [--body B | --body-file F] [--groups F] [--as NAME]
   merge mr body <branch> (--body B | --body-file F) [--as NAME]   replaces the body in place, keeping the review
   merge mr wait <branch> [--as NAME]      returns on each comment or decision; run it again to keep listening
@@ -39,7 +39,17 @@ defmodule Merge.CLI do
 
   def usage, do: @usage
 
-  def url_file, do: Path.join([System.user_home!(), ".merge", "url"])
+  @doc "Where the server keeps its things: `MERGE_HOME`, else `~/.merge`."
+  def home do
+    case System.get_env("MERGE_HOME") do
+      home when home not in [nil, ""] -> Path.expand(home)
+      _ -> Path.join(System.user_home!(), ".merge")
+    end
+  end
+
+  def home?, do: System.get_env("MERGE_HOME") not in [nil, ""]
+
+  def url_file, do: Path.join(home(), "url")
 
   def cwd, do: System.get_env("MERGE_CWD") || File.cwd!()
 

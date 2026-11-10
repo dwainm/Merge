@@ -10,7 +10,7 @@ No GitHub and no database: each merge request is a process, gone when the server
 
 `bin/merge` works from any directory; link it onto your PATH as `merge`.
 
-    merge serve [--port N]
+    merge serve [--port N] [--repo PATH] [--check CMD] [--check-image CMD] [--auto-push-after 20m]
         merge serve                     # prints http://localhost:<PORT> and https://merge.dev.dayofplenty.com
 
     merge mr open <branch> [--repo PATH] [--base BRANCH] [--title T] [--body B | --body-file F] [--groups F] [--as NAME]
@@ -48,11 +48,18 @@ No GitHub and no database: each merge request is a process, gone when the server
 `approved`, `needs-work`, `working`, `addressed`, `new-commits`, `body-updated`, `conflicts`, `merges-cleanly`, `rewritten`,
 `branch-gone`, `merged`, `on-origin`, `closed`, and for `main`: `main-tip`, `checks-running`,
 `checks-passed`, `checks-failed`, `image-running`, `image-passed`, `image-failed`, `pushed`,
-`push-failed`. The lines are kept in
+`push-failed`, `auto-push-on`, `auto-push-off`, and `auto-pushed` (beside the `pushed` line
+of a push the timer made: `auto-pushed main 3 commits, origin at 1a2b3c4`). The lines are kept in
 `~/.merge/events.log`; `--since` (a time, or an age like `30m`) replays them. It reconnects
 after a server restart and carries on from the last line it printed. MCP: `watch_events`.
 
 The commands find the server through `~/.merge/url` (`MERGE_URL` overrides it).
+
+`MERGE_HOME=DIR` moves everything a server keeps (merge requests, events, the checks'
+checkout, the Auto Push toggle, `url`) from `~/.merge` to `DIR`, and keeps that server on
+localhost. A test server beside the service, then, remembers without touching the
+service's state: `MERGE_HOME=/tmp/m merge serve --port 4800 --repo /tmp/m/clone`, and
+`MERGE_HOME=/tmp/m merge mr watch` to follow it.
 
 ## The files, in reading order
 
@@ -144,6 +151,30 @@ haven't. Results are kept per commit on disk.
 
 The flow for a coordinator: merge into local main (all at once when there are
 several), wait for "Checks passed" on the tip, then Push All from the home page.
+
+## Pushing by itself
+
+**Auto Push**, the toggle under main against GitHub on the home page, pushes main to
+GitHub by itself. It is off until someone turns it on, and stays as it was across a
+restart (`~/.merge/auto_push.term`). When local main is ahead of GitHub, it pushes main's
+tip, as Push All does, once all of these hold:
+
+- the toggle is on;
+- the tip hasn't moved for 20 minutes (`serve --auto-push-after 20m`; `90s` and `1h`
+  work too). Every new tip starts the 20 minutes again, and so does turning the toggle on;
+- the checks passed on that exact tip (without a `--check` nothing is proven, so it never
+  pushes), and its image build passed or wasn't needed;
+- GitHub has nothing main lacks, and the dry run says the push will land.
+
+Beside the toggle the page says when, "Pushes itself at 14:32" (Johannesburg time), or
+what holds it: "Waiting for the checks", "Checks failed: not pushing", "GitHub has commits
+you don't: not pushing". Right before it pushes it reads everything again (the drift, a
+new dry run, the checks of that sha), and the sha it judged is the one that goes, so a
+tip that moves meanwhile isn't pushed. A push is judged as a hand push is, so `pushed` or
+`push-failed` follows, and `auto-pushed` with it when it went. A failed auto-push is not
+tried again: it waits for a new tip, or a push by hand. The watcher looks every minute,
+with a timer for the minute a tip falls due. The Push buttons work as they always did,
+whatever the toggle says.
 
 ## Trees and servers
 
