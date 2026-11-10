@@ -423,13 +423,8 @@ defmodule MergeWeb.MergeRequestComponents do
       class={[
         "rack block shrink-0",
         @class,
-        case @state do
-          :running -> "rack-running text-(--pending-text)"
-          :up -> "text-(--info-text)"
-          :error -> "text-(--warn-text)"
-          :not_answering -> "text-(--merged-text)"
-          :off -> "text-(--text-faint)"
-        end
+        @state == :running && "rack-running",
+        rack_colour(@state)
       ]}
     >
       <g
@@ -463,6 +458,13 @@ defmodule MergeWeb.MergeRequestComponents do
     </svg>
     """
   end
+
+  # The rack's colour, which the sheet's status line wears too.
+  defp rack_colour(:running), do: "text-(--pending-text)"
+  defp rack_colour(:up), do: "text-(--info-text)"
+  defp rack_colour(:error), do: "text-(--warn-text)"
+  defp rack_colour(:not_answering), do: "text-(--merged-text)"
+  defp rack_colour(:off), do: "text-(--text-faint)"
 
   defp rack_state(_status, true), do: :running
   defp rack_state(status, false) when status in [:up, :error, :not_answering], do: status
@@ -544,10 +546,13 @@ defmodule MergeWeb.MergeRequestComponents do
           <dt class="text-(--text-muted)">Status</dt>
           <dd id="server-sheet-status" class="flex min-w-0 items-center gap-2">
             <.rack status={@tree.status} running={running?(@run)} />
-            <span class={[
-              "min-w-0 break-words",
-              @tree.status in [:error, :not_answering] && "text-(--bad-text)"
-            ]}>
+            <span
+              id="server-sheet-status-text"
+              class={[
+                "min-w-0 break-words",
+                rack_colour(rack_state(@tree.status, running?(@run)))
+              ]}
+            >
               {status_text(@tree)}
             </span>
           </dd>

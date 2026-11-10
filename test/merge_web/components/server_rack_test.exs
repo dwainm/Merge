@@ -75,4 +75,27 @@ defmodule MergeWeb.ServerRackTest do
       refute class =~ "--bad-"
     end
   end
+
+  # The sheet's status line wears its rack's colour, not the old red.
+  defp sheet_status(tree, run \\ nil) do
+    runs = if run, do: %{tree.path => run}, else: %{}
+
+    (&MergeRequestComponents.server_sheet/1)
+    |> render_component(tree: tree, runs: runs)
+    |> LazyHTML.from_fragment()
+    |> LazyHTML.query("#server-sheet-status-text")
+    |> LazyHTML.attribute("class")
+    |> List.first()
+  end
+
+  test "the sheet's status line takes its rack's colour" do
+    assert sheet_status(tree(:up)) =~ "text-(--info-text)"
+    assert sheet_status(tree(:error, "CompileError")) =~ "text-(--warn-text)"
+    assert sheet_status(tree(:not_answering, "not answering")) =~ "text-(--merged-text)"
+    assert sheet_status(tree(:off)) =~ "text-(--text-faint)"
+
+    running = %{state: :running, action: :reseed, name: "app", output: []}
+    assert sheet_status(tree(:up), running) =~ "text-(--pending-text)"
+    refute sheet_status(tree(:error, "CompileError")) =~ "--bad-"
+  end
 end
