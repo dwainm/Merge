@@ -5,7 +5,8 @@ defmodule Merge.Drift do
   first merge request's. `Merge.Watcher` fetches and broadcasts it on
   `topic/0` as `{:drift, drift}`, with main's latest CI runs from `gh`;
   Each refresh with commits ahead also asks git whether a push would land
-  (`git push --dry-run`), as `:landing` (`landing/2`).
+  (`git push --dry-run`), as `:landing` (`landing/2`), and notes main's tip
+  for `Merge.AutoPush`, whose clock starts when it first sees a tip.
   `push/0` and `pull/0` close the gap, `push/2` with a commit closes part of
   it, and `merge_github/0` brings GitHub's commits in when the two have
   diverged. A push is judged by git's answer and then by a fetch: GitHub's main
@@ -224,6 +225,7 @@ defmodule Merge.Drift do
 
     emit_tip(current(), drift)
     if drift, do: drop_stale_push(drift.repo)
+    if drift, do: Merge.AutoPush.see_tip(drift.main)
     put_current(drift)
     broadcast(drift)
     drift

@@ -3,8 +3,10 @@ defmodule Merge.Watcher do
   Every minute (`config :merge, :watch_ms`; nil turns it off): fetches
   origin in each repo the merge requests use, broadcasts the drift of main,
   marks merge requests merged when their branch has landed on main, and
-  broadcasts the trees and their servers (`Merge.Servers`).
-  `refresh/0` does the same at once (the home page asks on load).
+  broadcasts the trees and their servers (`Merge.Servers`), and lets
+  `Merge.AutoPush` push main when it is due, with a timer for the moment it
+  falls due between rounds. `refresh/0` does the same at once (the home page
+  asks on load).
   """
 
   use GenServer
@@ -15,6 +17,12 @@ defmodule Merge.Watcher do
 
   @doc "Fetches and checks now, in the background."
   def refresh, do: GenServer.cast(__MODULE__, :run)
+
+  @doc "Sets the timer for the auto-push's moment again (the toggle moved)."
+  def schedule_auto_push do
+    if Process.whereis(__MODULE__), do: GenServer.cast(__MODULE__, :schedule_auto_push)
+    :ok
+  end
 
   @impl true
   def init(nil) do
@@ -27,13 +35,39 @@ defmodule Merge.Watcher do
   def handle_info(:tick, state) do
     run()
     Process.send_after(self(), :tick, interval())
-    {:noreply, state}
+    {:noreply, schedule(state)}
   end
+
+  # The moment the auto-push fell due, between rounds.
+  def handle_info(:auto_push, _state) do
+    Merge.AutoPush.run()
+    {:noreply, schedule(nil)}
+  end
+
+  def handle_info(_msg, state), do: {:noreply, state}
 
   @impl true
   def handle_cast(:run, state) do
     run()
-    {:noreply, state}
+    {:noreply, schedule(state)}
+  end
+
+  def handle_cast(:schedule_auto_push, state), do: {:noreply, schedule(state)}
+
+  # One timer at most, for when main's tip falls due (the state is its ref).
+  defp schedule(timer) do
+    if is_reference(timer), do: Process.cancel_timer(timer)
+
+    case Merge.AutoPush.status(Drift.current()) do
+      {:due, at} ->
+        ms = max(DateTime.diff(at, DateTime.utc_now(), :millisecond), 0) + 500
+        Process.send_after(self(), :auto_push, ms)
+
+      _ ->
+        nil
+    end
+  rescue
+    _ -> nil
   end
 
   @doc "One round: fetch, drift, merges, servers."
@@ -46,6 +80,10 @@ defmodule Merge.Watcher do
     |> Enum.each(&Git.fetch/1)
 
     with %{repo: repo, main: main} <- Drift.refresh(), do: Merge.Checks.want(repo, main)
+
+    # After the fetch, so GitHub's main is as fresh as it gets. Off unless the toggle is
+    # on; it reads everything again itself, and holds on anything it can't prove.
+    Merge.AutoPush.run()
 
     Enum.each(mrs, fn mr ->
       MergeRequest.check_branch(mr.branch)

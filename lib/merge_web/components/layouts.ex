@@ -35,6 +35,7 @@ defmodule MergeWeb.Layouts do
   attr :current, :string, default: nil, doc: "the branch on screen, whose tab is marked"
 
   slot :inner_block, required: true
+  slot :header_end, doc: "at the header's right end (the home page's Auto Push)"
 
   def app(assigns) do
     ~H"""
@@ -46,7 +47,13 @@ defmodule MergeWeb.Layouts do
         >
           <img src={~p"/images/logo.svg"} alt="" class="h-5 w-5" /> Merge
         </.link>
-        <span class="text-xs text-(--text-faint)">the easy workflow for Elixir projects</span>
+        <span class={[
+          "text-xs text-(--text-faint)",
+          @header_end != [] && "hidden md:inline"
+        ]}>
+          the easy workflow for Elixir projects
+        </span>
+        <div :if={@header_end != []} class="ml-auto min-w-0">{render_slot(@header_end)}</div>
       </div>
     </header>
 
