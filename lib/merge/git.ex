@@ -265,8 +265,103 @@ defmodule Merge.Git do
     end
   end
 
-  defp checked_out_in(repo, branch) do
+  @doc "The worktree that has `branch` checked out, or nil."
+  def checked_out_in(repo, branch) do
     Enum.find_value(worktrees(repo), &(&1.branch == branch && &1.path))
+  end
+
+  @doc "True when the worktree has uncommitted changes to tracked files (staged or not)."
+  def dirty?(worktree) do
+    case git(worktree, ["status", "--porcelain", "--untracked-files=no"]) do
+      {:ok, out} -> String.trim(out) != ""
+      {:error, _} -> true
+    end
+  end
+
+  @doc """
+  What the worktree is in the middle of: `:merge`, `:cherry_pick`, `:revert`,
+  `:rebase`, or nil when nothing.
+  """
+  def in_progress(worktree) do
+    [
+      merge: "MERGE_HEAD",
+      cherry_pick: "CHERRY_PICK_HEAD",
+      revert: "REVERT_HEAD",
+      rebase: "rebase-merge",
+      rebase: "rebase-apply"
+    ]
+    |> Enum.find_value(fn {what, name} -> File.exists?(git_path(worktree, name)) && what end)
+  end
+
+  defp git_path(worktree, name) do
+    case git(worktree, ["rev-parse", "--path-format=absolute", "--git-path", name]) do
+      {:ok, path} -> String.trim(path)
+      {:error, _} -> Path.join([worktree, ".git", name])
+    end
+  end
+
+  @doc """
+  Merges the commit `theirs` into the branch checked out in `worktree`, with a
+  merge commit and exactly `message` (`git merge --no-ff`), and only while that
+  branch is still at `ours`. `{:ok, sha}` of the merge commit. When git stops
+  halfway the merge is aborted (`git merge --abort`), but only a merge of
+  `theirs`, so someone else's merge in the same worktree is never touched:
+  `{:error, output}`.
+  """
+  def merge_no_ff(worktree, theirs, message, ours) do
+    with {:ok, ^ours} <- rev_parse(worktree, "HEAD") do
+      case git(worktree, ["merge", "--no-ff", "--no-edit", "-m", message, theirs]) do
+        {:ok, _} ->
+          rev_parse(worktree, "HEAD")
+
+        {:error, output} ->
+          merge_head = git_path(worktree, "MERGE_HEAD")
+
+          if File.exists?(merge_head) and String.trim(File.read!(merge_head)) == theirs,
+            do: git(worktree, ["merge", "--abort"])
+
+          {:error, output}
+      end
+    else
+      {:ok, _other} -> {:error, "main moved while it was being judged"}
+      {:error, message} -> {:error, message}
+    end
+  end
+
+  @doc """
+  The commits on `ref`'s first-parent line since `from` (`from..ref`), oldest
+  first, each as `[sha | parents]`.
+  """
+  def first_parent_line(repo, from, ref) do
+    with {:ok, out} <-
+           git(repo, ["rev-list", "--first-parent", "--reverse", "--parents", "#{from}..#{ref}"]) do
+      {:ok, out |> String.split("\n", trim: true) |> Enum.map(&String.split/1)}
+    end
+  end
+
+  @doc """
+  Whether the merge commit `sha` of `ours` and `theirs` is only that merge:
+  its tree is the one git makes of them by itself. A merge git can't make by
+  itself (it conflicts) was resolved by hand, and counts.
+  """
+  def plain_merge?(repo, sha, ours, theirs) do
+    case System.cmd("git", ["-C", repo, "merge-tree", "--write-tree", ours, theirs],
+           stderr_to_stdout: true
+         ) do
+      {out, 0} ->
+        tree = out |> String.split("\n", trim: true) |> List.first()
+        match?({:ok, ^tree}, tree_of(repo, sha))
+
+      {_out, 1} ->
+        true
+
+      _ ->
+        false
+    end
+  end
+
+  defp tree_of(repo, sha) do
+    with {:ok, out} <- git(repo, ["rev-parse", sha <> "^{tree}"]), do: {:ok, String.trim(out)}
   end
 
   @doc """

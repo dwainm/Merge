@@ -582,6 +582,8 @@ defmodule Merge.MergeRequest do
       Events.emit(event, state.branch, "at #{Events.short(state.head)} #{by}#{body}")
 
       state = changed(tell_waiters(state))
+      # Off unless its switch is on; it runs in the watcher, once this call is done.
+      if verdict == :approved, do: Merge.Watcher.auto_merge(state.branch)
       {:reply, {:ok, decision}, state}
     end
   end

@@ -5,8 +5,10 @@ defmodule Merge.Watcher do
   marks merge requests merged when their branch has landed on main, and
   broadcasts the trees and their servers (`Merge.Servers`), and lets
   `Merge.AutoPush` push main when it is due, with a timer for the moment it
-  falls due between rounds. `refresh/0` does the same at once (the home page
-  asks on load).
+  falls due between rounds, and lets `Merge.AutoMerge` merge approved branches
+  into main (after each round, on each approval, when its switch goes on): all
+  in this one process, so one merge runs at a time. `refresh/0` does the round
+  at once (the home page asks on load).
   """
 
   use GenServer
@@ -21,6 +23,12 @@ defmodule Merge.Watcher do
   @doc "Sets the timer for the auto-push's moment again (the toggle moved)."
   def schedule_auto_push do
     if Process.whereis(__MODULE__), do: GenServer.cast(__MODULE__, :schedule_auto_push)
+    :ok
+  end
+
+  @doc "Lets Auto Merge look now, at `branch`'s merge request or every approved one."
+  def auto_merge(branch \\ nil) do
+    if Process.whereis(__MODULE__), do: GenServer.cast(__MODULE__, {:auto_merge, branch})
     :ok
   end
 
@@ -53,6 +61,12 @@ defmodule Merge.Watcher do
   end
 
   def handle_cast(:schedule_auto_push, state), do: {:noreply, schedule(state)}
+
+  # Off unless its switch is on. A merge moves main, so the auto-push's timer is set again.
+  def handle_cast({:auto_merge, branch}, state) do
+    Merge.AutoMerge.run(branch)
+    {:noreply, schedule(state)}
+  end
 
   # One timer at most, for when main's tip falls due (the state is its ref).
   defp schedule(timer) do
@@ -89,6 +103,9 @@ defmodule Merge.Watcher do
       MergeRequest.check_branch(mr.branch)
       MergeRequest.check_merged(mr.branch)
     end)
+
+    # After the branches are looked at, so a conflict that is gone is gone here too.
+    Merge.AutoMerge.run()
 
     Merge.Servers.refresh()
   end
