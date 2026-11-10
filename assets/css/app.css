@@ -130,6 +130,8 @@
   --warn-bg: #fff8c5;
   --warn-border: #d4a72c;
   --warn-text: #7d4e00;
+  /* A server that is not running (no server, not answering): orange. */
+  --stopped-text: #bc4c00;
   --bad-bg: #ffebe9;
   --bad-border: #ff8182;
   --bad-text: #a40e26;
@@ -175,6 +177,7 @@
     --warn-bg: #272115;
     --warn-border: #9e6a03;
     --warn-text: #e3b341;
+    --stopped-text: #db6d28;
     --bad-bg: #25171c;
     --bad-border: #da3633;
     --bad-text: #ff7b72;
@@ -271,4 +274,14 @@
 @keyframes review-settle { from { transform: scale(0.97); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) {
   .review-dialog[open], .review-dialog::backdrop { animation: none; }
+}
+
+/* A tree's server rack (MergeRequestComponents.rack/1): while a Restart,
+   Reseed or Turn off runs, its two lights blink in turn. */
+.rack-running .rack-light { animation: rack-blink 1.4s ease-in-out infinite; }
+.rack-running .rack-light + .rack-light { animation-delay: 0.7s; }
+@keyframes rack-blink { 50% { opacity: 0.2; } }
+@media (prefers-reduced-motion: reduce) {
+  .rack-running .rack-light { animation: none; }
+  .rack-running .rack-light + .rack-light { opacity: 0.3; }
 }

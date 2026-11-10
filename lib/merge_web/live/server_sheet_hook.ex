@@ -1,9 +1,9 @@
 defmodule MergeWeb.ServerSheetHook do
   @moduledoc """
-  Gives a LiveView the server sheet: tapping a tree's dot opens it
+  Gives a LiveView the server sheet: tapping a tree's rack opens it
   (`@server_sheet`, the tree, with `@server_log`, the last lines of its log),
   and its Restart, Reseed and Turn off run the tree's `bin/dev`
-  (`Merge.DevScript`). `@dev_runs` is every tree's last run, for the dots.
+  (`Merge.DevScript`). `@dev_runs` is every tree's last run, for the racks.
   Render `MergeWeb.MergeRequestComponents.server_sheet/1` with these.
   """
 
@@ -33,7 +33,7 @@ defmodule MergeWeb.ServerSheetHook do
   defp info({:dev_runs, runs}, socket),
     do: {:halt, socket |> assign(:dev_runs, runs) |> reload()}
 
-  # The page wants this too, for its own dots.
+  # The page wants this too, for its own racks.
   defp info({:servers, repos}, socket), do: {:cont, reload(socket, repos)}
   defp info(_msg, socket), do: {:cont, socket}
 
