@@ -40,9 +40,100 @@ defmodule Merge.Git do
   @doc "The diff between two commits."
   def range_diff(repo, from, to), do: diff(repo, [from, to])
 
-  @doc "The commits on `branch` that are not on `base`, newest first."
+  @doc """
+  The line a branch is judged against for what is its own: `base`, except that
+  for `origin/main` it is local `main` when main has origin/main in it, since
+  local main is where branches merge and what a stream merges in. Not once
+  `branch` is on local main itself: then it would have nothing of its own.
+  """
+  def own_base(repo, "origin/main", branch) do
+    with {:ok, _} <- rev_parse(repo, "main"),
+         true <- ancestor?(repo, "origin/main", "main"),
+         false <- ancestor?(repo, branch, "main") do
+      "main"
+    else
+      _ -> "origin/main"
+    end
+  end
+
+  def own_base(_repo, base, _branch), do: base
+
+  @doc "The paths that differ between two commits."
+  def paths_between(repo, from, to) do
+    with {:ok, out} <- git(repo, ["diff", "--name-only", "--no-renames", from, to]) do
+      {:ok, String.split(out, "\n", trim: true)}
+    end
+  end
+
+  @doc """
+  The tree git makes by itself of merging `theirs` into `ours` (from
+  `merge_base` when given, else their own), touching no worktree. A file that
+  conflicts is in it with its conflict markers, so a merge resolved by hand
+  differs from it there.
+  """
+  def merge_tree(repo, ours, theirs, merge_base \\ nil) do
+    from = if merge_base, do: ["--merge-base", merge_base], else: []
+    # The conflict markers are labelled with what is passed: short shas read better.
+    sides = Enum.map([ours, theirs], &short_name(repo, &1))
+    args = ["-C", repo, "merge-tree", "--write-tree", "--no-messages"] ++ from ++ sides
+
+    case System.cmd("git", args, stderr_to_stdout: true) do
+      {out, code} when code in [0, 1] -> {:ok, out |> String.split("\n", trim: true) |> hd()}
+      {out, _} -> {:error, String.trim(out)}
+    end
+  end
+
+  defp short_name(repo, ref) do
+    case git(repo, ["rev-parse", "--short=10", "--verify", "--quiet", ref <> "^{commit}"]) do
+      {:ok, short} -> String.trim(short)
+      {:error, _} -> ref
+    end
+  end
+
+  @doc """
+  What a merge commit has of its own: the diff from the tree git makes by
+  itself of its first two parents to the commit (git's remerge diff). A merge
+  that went through cleanly has none; a conflict resolved by hand shows as its
+  resolution.
+  """
+  def remerge_diff(repo, sha) do
+    with {:ok, out} <- git(repo, ["rev-list", "--parents", "-n", "1", sha]),
+         [_, ours, theirs | _] <- String.split(out),
+         {:ok, tree} <- merge_tree(repo, ours, theirs) do
+      diff(repo, [tree, sha])
+    else
+      {:error, message} -> {:error, message}
+      _ -> {:error, "#{String.slice(sha, 0, 7)} is not a merge"}
+    end
+  end
+
+  @doc """
+  What the author changed from the reviewed head `from` to `to`, leaving out
+  what `base` brought in between: the branch's own diff then is laid on the
+  merge base it has now (`merge_tree` from its old merge base), and that is
+  diffed against `to`. A file only base changed drops out; a conflict the
+  author resolved shows as its resolution. With the merge base unmoved it is
+  the plain diff from `from` to `to`.
+  """
+  def since_diff(repo, base, from, to) do
+    with {:ok, old} <- merge_base(repo, base, from),
+         {:ok, new} <- merge_base(repo, base, to) do
+      if old == new do
+        range_diff(repo, from, to)
+      else
+        with {:ok, tree} <- merge_tree(repo, from, new, old), do: diff(repo, [tree, to])
+      end
+    else
+      _ -> range_diff(repo, from, to)
+    end
+  end
+
+  @doc """
+  The commits on `branch` that are not on `base`, newest first, each with its
+  `parents`.
+  """
   def commits(repo, base, branch) do
-    format = Enum.join(["%H", "%h", "%an", "%aI", "%s"], "%x1f") <> "%x1e"
+    format = Enum.join(["%H", "%h", "%an", "%aI", "%P", "%s"], "%x1f") <> "%x1e"
 
     with {:ok, out} <- git(repo, ["log", "--format=#{format}", "#{base}..#{branch}"]) do
       commits =
@@ -51,8 +142,16 @@ defmodule Merge.Git do
         |> Enum.map(&String.trim_leading(&1, "\n"))
         |> Enum.reject(&(&1 == ""))
         |> Enum.map(fn line ->
-          [sha, short, author, date, subject] = String.split(line, "\x1f", parts: 5)
-          %{sha: sha, short: short, author: author, date: date, subject: subject}
+          [sha, short, author, date, parents, subject] = String.split(line, "\x1f", parts: 6)
+
+          %{
+            sha: sha,
+            short: short,
+            author: author,
+            date: date,
+            parents: String.split(parents),
+            subject: subject
+          }
         end)
 
       {:ok, commits}

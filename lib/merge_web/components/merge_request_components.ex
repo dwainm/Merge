@@ -334,27 +334,73 @@ defmodule MergeWeb.MergeRequestComponents do
     ~H"""
     <ol id="commits" class="divide-y divide-(--border) text-sm">
       <li :for={c <- @commits} id={"commit-#{c.short}"}>
-        <.link
-          patch={MergeWeb.mr_path(@branch) <> "?commit=" <> c.sha}
-          class={[
-            "block px-3 py-2 transition hover:bg-(--surface-2)",
-            @selected == c.sha && "bg-(--info-bg)"
-          ]}
-        >
-          <div class="flex items-center gap-2">
-            <span class="font-mono text-xs text-(--link)">{c.short}</span>
-            <span
-              :if={@new_since && MapSet.member?(@new_since, c.sha)}
-              class="rounded bg-(--warn-bg) px-1 text-[10px] font-medium uppercase text-(--warn-text)"
-            >
-              new
-            </span>
-          </div>
-          <div class="mt-0.5 line-clamp-2 text-(--text)">{c.subject}</div>
-          <div class="mt-0.5 text-xs text-(--text-faint)">{c.author} · {ago(c.date)}</div>
-        </.link>
+        <%= if Map.get(c, :merge_of) do %>
+          <.base_merge commit={c} branch={@branch} selected={@selected == c.sha} />
+        <% else %>
+          <.link
+            patch={MergeWeb.mr_path(@branch) <> "?commit=" <> c.sha}
+            class={[
+              "block px-3 py-2 transition hover:bg-(--surface-2)",
+              @selected == c.sha && "bg-(--info-bg)"
+            ]}
+          >
+            <div class="flex items-center gap-2">
+              <span class="font-mono text-xs text-(--link)">{c.short}</span>
+              <span
+                :if={@new_since && MapSet.member?(@new_since, c.sha)}
+                class="rounded bg-(--warn-bg) px-1 text-[10px] font-medium uppercase text-(--warn-text)"
+              >
+                new
+              </span>
+            </div>
+            <div class="mt-0.5 line-clamp-2 text-(--text)">{c.subject}</div>
+            <div class="mt-0.5 text-xs text-(--text-faint)">{c.author} · {ago(c.date)}</div>
+          </.link>
+        <% end %>
       </li>
     </ol>
+    """
+  end
+
+  attr :commit, :map, required: true
+  attr :branch, :string, required: true
+  attr :selected, :boolean, default: false
+
+  # A merge of the base into the branch, folded to one quiet line: what it is,
+  # how much the base brought, and whether the author had to resolve anything.
+  # Its own view shows only that.
+  defp base_merge(assigns) do
+    ~H"""
+    <.link
+      patch={MergeWeb.mr_path(@branch) <> "?commit=" <> @commit.sha}
+      id={"base-merge-#{@commit.short}"}
+      title={@commit.subject}
+      class={[
+        "flex items-start gap-2 px-3 py-1.5 text-xs text-(--text-muted) transition hover:bg-(--surface-2)",
+        @selected && "bg-(--info-bg)"
+      ]}
+    >
+      <.icon
+        name="hero-arrows-pointing-in"
+        class="mt-px size-3.5 shrink-0 text-(--text-faint)"
+      />
+      <span class="min-w-0 flex-1">
+        <span class="block">
+          Merged {@commit.merge_of} in<span class="sr-only">,</span>
+        </span>
+        <span class="flex flex-wrap items-center gap-x-1.5 text-(--text-faint)">
+          <span>{count(@commit.from_base, "file")} from {@commit.merge_of}</span>
+          <span
+            :if={Map.get(@commit, :own_files, 0) > 0}
+            title={"The author resolved #{count(@commit.own_files, "file")} by hand in this merge"}
+            class="rounded bg-(--warn-bg) px-1 text-[10px] font-medium text-(--warn-text)"
+          >
+            {@commit.own_files} resolved
+          </span>
+        </span>
+      </span>
+      <span class="shrink-0 font-mono text-(--text-faint)">{@commit.short}</span>
+    </.link>
     """
   end
 

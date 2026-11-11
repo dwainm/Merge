@@ -171,6 +171,17 @@ defmodule MergeWeb.MergeRequestLive do
 
   defp last_decision(mr), do: List.last(mr.decisions)
 
+  defp base_merges(mr), do: Enum.count(mr.commits, &MergeRequest.base_merge?/1)
+
+  # What an empty diff means in each view.
+  defp no_changes({:commit, _}, %{merge_of: base}, _moved) when is_binary(base),
+    do: "Nothing of the author's: #{base} merged cleanly."
+
+  defp no_changes(:since, _selected, base) when is_binary(base),
+    do: "Nothing of the author's since your review: #{base} merged in cleanly."
+
+  defp no_changes(_view, _selected, _moved), do: "No changes."
+
   # The files for the current view. The branch diff is the process's cached one.
   defp load_files(%{assigns: %{mr: mr, view: view}} = socket) do
     result =
@@ -179,14 +190,26 @@ defmodule MergeWeb.MergeRequestLive do
           {:ok, mr.files}
 
         {:commit, sha} ->
-          if Enum.any?(mr.commits, &(&1.sha == sha)),
-            do: Git.commit_diff(MergeRequest.git_repo(mr), sha),
-            else: {:error, "That commit is not on #{mr.branch}."}
+          case Enum.find(mr.commits, &(&1.sha == sha)) do
+            nil ->
+              {:error, "That commit is not on #{mr.branch}."}
 
+            # A merge of the base shows only what the author did in it.
+            commit ->
+              if MergeRequest.base_merge?(commit),
+                do: Git.remerge_diff(MergeRequest.git_repo(mr), sha),
+                else: Git.commit_diff(MergeRequest.git_repo(mr), sha)
+          end
+
+        # Only the author's changes: what the base brought in drops out.
         :since ->
           case last_decision(mr) do
-            nil -> {:ok, mr.files}
-            d -> Git.range_diff(MergeRequest.git_repo(mr), d.head, mr.head)
+            nil ->
+              {:ok, mr.files}
+
+            d ->
+              repo = MergeRequest.git_repo(mr)
+              Git.since_diff(repo, MergeRequest.own_base(mr), d.head, mr.head)
           end
       end
 
@@ -218,7 +241,9 @@ defmodule MergeWeb.MergeRequestLive do
       |> Enum.filter(&(&1.path && &1.line && &1.commit == commit))
       |> Enum.group_by(&{&1.path, &1.side, &1.line})
 
-    new_since =
+    # The commits after the reviewed head; the merges of the base among them
+    # aren't the author's, so they aren't new, but they say the base moved.
+    after_review =
       case last_decision(mr) do
         nil ->
           nil
@@ -227,14 +252,20 @@ defmodule MergeWeb.MergeRequestLive do
           mr.commits
           |> Enum.take_while(&(&1.sha != d.head))
           |> then(fn new -> if length(new) == length(mr.commits), do: [], else: new end)
-          |> MapSet.new(& &1.sha)
       end
+
+    new_since =
+      after_review &&
+        after_review |> Enum.reject(&MergeRequest.base_merge?/1) |> MapSet.new(& &1.sha)
+
+    base_moved = after_review && Enum.find_value(after_review, &Map.get(&1, :merge_of))
 
     socket
     |> main_checks()
     |> assign(
       line_comments: line_comments,
       new_since: new_since,
+      base_moved: base_moved,
       selected: commit && Enum.find(mr.commits, &(&1.sha == commit))
     )
   end
@@ -578,6 +609,18 @@ defmodule MergeWeb.MergeRequestLive do
         <% end %>
       </section>
 
+      <p
+        :if={@base_moved}
+        id="base-moved"
+        class="mb-3 flex items-center gap-1.5 text-xs text-(--text-muted)"
+      >
+        <.icon name="hero-arrows-pointing-in" class="size-3.5 shrink-0 text-(--text-faint)" />
+        <span>
+          <span class="font-mono">{@base_moved}</span>
+          has moved since your review; the branch has it merged in.
+        </span>
+      </p>
+
       <div
         :if={@new_since && MapSet.size(@new_since) > 0 && @view != :since}
         id="since-review"
@@ -643,7 +686,11 @@ defmodule MergeWeb.MergeRequestLive do
             </script>
           </details>
           <div class="flex items-center justify-between border-b border-(--border) bg-(--surface-2) px-3 py-2 text-xs font-medium text-(--text-2)">
-            <span>{count(@mr.commits, "commit")}, newest first</span>
+            <span>{count(MergeRequest.own_commits(@mr), "commit")}, newest first</span>
+            <span :if={base_merges(@mr) > 0} id="base-merges-count" class="text-(--text-faint)">
+              {count(base_merges(@mr), "merge")} of {@mr.commits
+              |> Enum.find_value(&Map.get(&1, :merge_of))}
+            </span>
           </div>
           <div class="max-h-56 overflow-y-auto lg:max-h-none">
             <.commit_list
@@ -701,7 +748,7 @@ defmodule MergeWeb.MergeRequestLive do
             id="no-changes"
             class="rounded-lg border border-(--border) bg-(--surface) px-3 py-4 text-sm text-(--text-muted)"
           >
-            No changes.
+            {no_changes(@view, @selected, @base_moved)}
           </p>
 
           <%!-- A component, so the browser skips the diff when it hasn't changed. --%>

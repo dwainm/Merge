@@ -50,7 +50,7 @@ defmodule Merge.MCP.OpenMergeRequest do
 
         Merge.MCP.reply(
           """
-          #{verb}: #{mr.title} (#{mr.branch} → #{mr.base}, #{length(mr.commits)} commits, #{length(mr.files)} files)
+          #{verb}: #{mr.title} (#{mr.branch} → #{mr.base}, #{length(Merge.MergeRequest.own_commits(mr))} commits, #{length(mr.files)} files)
           #{MergeWeb.mr_url(mr.branch)}
           Call wait_for_review with branch #{mr.branch} to hear the decision.
           """,
