@@ -292,10 +292,7 @@ reloader picks up code changes, but not new libraries).
   branch against its parent.
 - **Diffs** are `git diff base...branch`, cached in the merge request's process and recomputed on
   `addressed`. A commit's diff is against its first parent.
-- **A branch's own is what it changed, not what it merged in.** With an `origin/main` base the
-  branch is judged against local main when main is ahead of GitHub (it merges there, and a
-  stream merges local main in), so the files, the +/− and the commit counts on the page, the home
-  page and `mr list` are the branch's own.
+- **An `origin/main` base is judged against local main** when local main contains origin/main and the branch isn't on main yet: local main is what a branch lands on, so the files, +/− and commit counts are the branch's own.
 - **"Since your review" is only what the author changed** since the reviewed head: the branch's
   own diff then, laid on the merge base it has now (`git merge-tree --merge-base`), against the
   head now. A file only main changed drops out, however much it changed; a conflict the author
