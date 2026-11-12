@@ -62,7 +62,9 @@ defmodule MergeWeb.MergeRequestLive do
   @impl true
   def handle_params(params, _uri, %{assigns: %{mr: nil}} = socket) do
     _ = params
-    {:noreply, assign(socket, view: :branch, files: [], groups: [], diff_error: nil)}
+
+    {:noreply,
+     assign(socket, view: :branch, files: [], groups: [], diff_error: nil, loaded: MapSet.new())}
   end
 
   def handle_params(params, _uri, socket) do
@@ -78,6 +80,11 @@ defmodule MergeWeb.MergeRequestLive do
 
   @impl true
   def handle_info({:checks, _sha}, socket), do: {:noreply, main_checks(socket)}
+
+  def handle_info(:more_files, %{assigns: %{mr: %{}}} = socket),
+    do: {:noreply, more_files(socket)}
+
+  def handle_info(:more_files, socket), do: {:noreply, socket}
 
   # For the queue's tabs (MergeWeb.QueueHook); this page follows its own topic.
   def handle_info(:merge_requests_changed, socket), do: {:noreply, socket}
@@ -131,6 +138,12 @@ defmodule MergeWeb.MergeRequestLive do
   end
 
   def handle_event("unpick", _params, socket), do: {:noreply, assign(socket, picked: nil)}
+
+  # A file that starts folded was opened: its lines are sent now.
+  def handle_event("open_file", %{"index" => index}, socket) do
+    loaded = MapSet.put(socket.assigns[:loaded] || MapSet.new(), index)
+    {:noreply, assign(socket, loaded: loaded)}
+  end
 
   def handle_event("line_comment", %{"line" => %{"body" => body}}, socket) do
     {path, side, line} = socket.assigns.picked
@@ -288,7 +301,40 @@ defmodule MergeWeb.MergeRequestLive do
       {:ok, files} -> assign(socket, files: files, groups: groups(socket, files), diff_error: nil)
       {:error, message} -> assign(socket, files: [], groups: [], diff_error: message)
     end
+    |> start_files()
     |> assign_derived()
+  end
+
+  # How many lines of diff go to the browser in one piece: enough to fill a
+  # few screens, little enough to build without the page stalling.
+  @lines_at_once 400
+
+  # The page goes first, with each file's name and counts; the files' lines
+  # follow in order, a few at a time. Nothing is sent before the page is live.
+  defp start_files(socket) do
+    if connected?(socket), do: send(self(), :more_files)
+    assign(socket, loaded: MapSet.new())
+  end
+
+  # The next files, in the order they read, up to `@lines_at_once` lines (one
+  # file at least). One that starts folded waits until it is opened.
+  defp more_files(%{assigns: %{groups: groups, loaded: loaded}} = socket) do
+    waiting =
+      groups
+      |> Enum.flat_map(& &1.files)
+      |> Enum.reject(&(MapSet.member?(loaded, &1.index) or starts_folded?(&1)))
+
+    {now, _} =
+      Enum.reduce_while(waiting, {[], 0}, fn file, {taken, lines} ->
+        lines = lines + lines(file)
+
+        if taken == [] or lines <= @lines_at_once,
+          do: {:cont, {[file.index | taken], lines}},
+          else: {:halt, {taken, lines}}
+      end)
+
+    if length(now) < length(waiting), do: send(self(), :more_files)
+    assign(socket, loaded: MapSet.union(loaded, MapSet.new(now)))
   end
 
   # The files in groups: the author's, then the stack's, read at the view's tip
@@ -307,10 +353,22 @@ defmodule MergeWeb.MergeRequestLive do
   defp assign_derived(%{assigns: %{mr: mr}} = socket) do
     commit = view_commit(socket)
 
+    # By file, then by line, each with what it shows, so a file's piece gets
+    # only its own and is sent again only when they change.
     line_comments =
       mr.comments
       |> Enum.filter(&(&1.path && &1.line && &1.commit == commit))
-      |> Enum.group_by(&{&1.path, &1.side, &1.line})
+      |> Enum.map(fn comment ->
+        %{
+          comment: comment,
+          addressed: addressed_for(mr, comment),
+          seen_by: if(reply?(comment), do: [], else: MergeRequest.seen_by(mr, comment))
+        }
+      end)
+      |> Enum.group_by(& &1.comment.path)
+      |> Map.new(fn {path, entries} ->
+        {path, Enum.group_by(entries, &{&1.comment.path, &1.comment.side, &1.comment.line})}
+      end)
 
     # The commits after the reviewed head; the merges of the base among them
     # aren't the author's, so they aren't new, but they say the base moved.
@@ -364,8 +422,6 @@ defmodule MergeWeb.MergeRequestLive do
   end
 
   defp sorted_timeline(mr), do: Enum.sort_by(timeline(mr), &elem(&1, 1).at, DateTime)
-
-  defp reply?(comment), do: Map.get(comment, :reply_to) != nil
 
   defp replies_to(mr, comment),
     do: Enum.filter(mr.comments, &(Map.get(&1, :reply_to) == comment.id))
@@ -834,52 +890,27 @@ defmodule MergeWeb.MergeRequestLive do
             {no_changes(@view, @selected, @base_moved)}
           </p>
 
-          <%!-- A component, so the browser skips the diff when it hasn't changed. --%>
-          <.live_component
-            module={MergeWeb.DiffComponent}
-            id="diff-files"
-            groups={@groups}
-            line_comments={@line_comments}
-            picked={@picked}
-            commentable={not MergeRequest.done?(@mr)}
-          >
-            <:comment :let={comment}>
-              <.comment
-                comment={comment}
-                addressed={addressed_for(@mr, comment)}
-                seen_by={if !reply?(comment), do: MergeRequest.seen_by(@mr, comment), else: []}
+          <%!-- Each file is a piece of its own: the page paints without the
+               diff, the files follow a few at a time (`:more_files`), one that
+               starts folded only when it is opened, and a comment or a picked
+               line sends its own file again, not the diff. --%>
+          <div id="diff-files">
+            <.diff_group :for={group <- @groups} group={group} headed={length(@groups) > 1}>
+              <.live_component
+                :for={file <- group.files}
+                module={MergeWeb.FileComponent}
+                id={"file-piece-#{file.index}"}
+                file={file}
+                index={file.index}
+                stacked={length(@groups) > 1}
+                loaded={MapSet.member?(@loaded, file.index)}
+                line_comments={Map.get(@line_comments, file.path, %{})}
+                picked={if(@picked && elem(@picked, 0) == file.path, do: @picked)}
+                form={if(@picked && elem(@picked, 0) == file.path, do: @line_form)}
+                commentable={not MergeRequest.done?(@mr)}
               />
-            </:comment>
-            <:comment_form>
-              <.form
-                for={@line_form}
-                id="line-comment-form"
-                phx-submit="line_comment"
-                class="space-y-2"
-              >
-                <textarea
-                  name={@line_form[:body].name}
-                  id="line-comment-body"
-                  rows="3"
-                  phx-mounted={JS.focus()}
-                  placeholder="Comment on this line"
-                  class="w-full rounded-md border border-(--border) bg-(--surface) px-2 py-1.5 text-base focus:border-(--link) sm:text-sm focus:outline-none"
-                >{@line_form[:body].value}</textarea>
-                <div class="flex gap-2">
-                  <button class="rounded-md bg-(--btn-bg) px-3 py-1.5 text-sm text-(--btn-text) hover:opacity-90">
-                    Comment
-                  </button>
-                  <button
-                    type="button"
-                    phx-click="unpick"
-                    class="rounded-md px-3 py-1.5 text-sm text-(--text-2) hover:bg-(--surface-2)"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </.form>
-            </:comment_form>
-          </.live_component>
+            </.diff_group>
+          </div>
         </section>
       </div>
 
@@ -1160,43 +1191,6 @@ defmodule MergeWeb.MergeRequestLive do
       placeholder={@placeholder}
       class="block w-full resize-y rounded-md border border-(--border) bg-(--surface) px-3 py-2 text-base focus:border-(--link) focus:outline-none sm:text-sm"
     >{@form[:body].value}</textarea>
-    """
-  end
-
-  attr :comment, :map, required: true
-  attr :addressed, :list, default: []
-  attr :replies, :list, default: []
-  attr :seen_by, :list, default: []
-  attr :show_location, :boolean, default: false
-
-  defp comment(assigns) do
-    ~H"""
-    <div class="text-sm">
-      <div class="flex flex-wrap items-baseline gap-x-2 text-xs text-(--text-muted)">
-        <span :if={reply?(@comment)} class="text-(--text-faint)">↳</span>
-        <span class="font-medium text-(--text)">{@comment.author}</span>
-        <span :if={@show_location && @comment.path} class="font-mono">
-          {@comment.path}:{@comment.line}{if @comment.side == "old", do: " (old)"}{if @comment.commit,
-            do: " in " <> String.slice(@comment.commit, 0, 7)}
-        </span>
-        <span>{ago(@comment.at)}</span>
-      </div>
-      <p class="mt-0.5 whitespace-pre-wrap text-(--text)">{@comment.body}</p>
-      <p :for={a <- @addressed} class="mt-1 text-xs text-(--info-text)">
-        ↳ addressed in <span class="font-mono">{a.short}</span>{if a.note, do: ": " <> a.note}
-      </p>
-      <p :if={@seen_by != []} class="mt-1 text-xs text-(--text-muted)">
-        <.icon name="hero-eye-micro" class="size-3.5 align-[-2px]" />
-        Seen by {Enum.join(@seen_by, ", ")}
-      </p>
-      <div
-        :for={r <- @replies}
-        id={"reply-#{r.id}"}
-        class="mt-2 ml-4 rounded-md bg-(--surface-2) px-2.5 py-1.5"
-      >
-        <.comment comment={r} />
-      </div>
-    </div>
     """
   end
 end

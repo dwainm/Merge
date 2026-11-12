@@ -158,13 +158,15 @@ defmodule MergeWeb.MergeRequestComponents do
     default: false,
     doc: "under a group heading, which the header floats below"
 
-  attr :quiet, :boolean, default: false, doc: "starts folded: nobody reads it line by line"
-  slot :comment_form
-  slot :comment
+  attr :loaded, :boolean,
+    default: true,
+    doc:
+      "false while the file's lines are not sent yet: its name and counts show, with a line saying so"
+
+  attr :form, :any, default: nil, doc: "the comment box's form, for the file with the picked line"
 
   def diff_file(assigns) do
-    lines = Enum.reduce(assigns.file.hunks, 0, &(length(&1.lines) + &2))
-    assigns = assign(assigns, :open, lines <= 600 and not assigns.quiet)
+    assigns = assign(assigns, :open, not starts_folded?(assigns.file))
 
     ~H"""
     <details
@@ -172,6 +174,9 @@ defmodule MergeWeb.MergeRequestComponents do
       open={@open}
       phx-hook=".FileFold"
       data-path={@file.path}
+      data-index={@index}
+      data-loaded={to_string(@loaded)}
+      data-waits={to_string(not @open)}
       class={[
         "group rounded-lg border border-(--border) bg-(--surface)",
         if(@stacked, do: "scroll-mt-13", else: "scroll-mt-4")
@@ -207,11 +212,21 @@ defmodule MergeWeb.MergeRequestComponents do
 
       <p :if={@file.binary?} class="px-3 py-2 text-xs text-(--text-muted)">Binary file</p>
 
+      <%!-- Its lines are on their way (the files come in order behind the
+           page), or are fetched now that it was opened. --%>
+      <p
+        :if={not @loaded and @file.hunks != []}
+        id={"file-#{@index}-loading"}
+        class="flex items-center gap-2 px-3 py-2 text-xs text-(--text-muted)"
+      >
+        <.icon name="hero-arrow-path" class="size-3.5 shrink-0 animate-spin" /> Loading the changes
+      </p>
+
       <%!-- The browser lays out and styles only the files on screen: a long
            diff is a hundred thousand elements, and laying them all out took
            seconds on a phone each time anything moved (opening a dialog). --%>
       <div
-        :if={@file.hunks != []}
+        :if={@loaded and @file.hunks != []}
         class="overflow-x-auto rounded-b-lg [content-visibility:auto] [contain-intrinsic-size:auto_600px]"
       >
         <table class="hl code-diff w-full border-collapse font-mono text-[12px] leading-5">
@@ -256,7 +271,11 @@ defmodule MergeWeb.MergeRequestComponents do
                   class="border-y border-(--border) bg-(--surface-2) px-3 py-2 font-sans"
                 >
                   <div class="sticky left-3 max-w-[calc(100vw-4rem)] lg:max-w-2xl">
-                    {render_slot(@comment, comment)}
+                    <.comment
+                      comment={comment.comment}
+                      addressed={comment.addressed}
+                      seen_by={comment.seen_by}
+                    />
                   </div>
                 </td>
               </tr>
@@ -265,8 +284,34 @@ defmodule MergeWeb.MergeRequestComponents do
                   colspan="3"
                   class="border-y border-(--border) bg-(--surface-2) px-3 py-2 font-sans"
                 >
-                  <div class="sticky left-3 max-w-[calc(100vw-4rem)] lg:max-w-2xl">
-                    {render_slot(@comment_form)}
+                  <div :if={@form} class="sticky left-3 max-w-[calc(100vw-4rem)] lg:max-w-2xl">
+                    <.form
+                      for={@form}
+                      id="line-comment-form"
+                      phx-submit="line_comment"
+                      class="space-y-2"
+                    >
+                      <textarea
+                        name={@form[:body].name}
+                        id="line-comment-body"
+                        rows="3"
+                        phx-mounted={JS.focus()}
+                        placeholder="Comment on this line"
+                        class="w-full rounded-md border border-(--border) bg-(--surface) px-2 py-1.5 text-base focus:border-(--link) sm:text-sm focus:outline-none"
+                      >{@form[:body].value}</textarea>
+                      <div class="flex gap-2">
+                        <button class="rounded-md bg-(--btn-bg) px-3 py-1.5 text-sm text-(--btn-text) hover:opacity-90">
+                          Comment
+                        </button>
+                        <button
+                          type="button"
+                          phx-click="unpick"
+                          class="rounded-md px-3 py-1.5 text-sm text-(--text-2) hover:bg-(--surface-2)"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </.form>
                   </div>
                 </td>
               </tr>
@@ -288,7 +333,9 @@ defmodule MergeWeb.MergeRequestComponents do
         mounted() {
           this.key = `merge:fold:${location.pathname}:${this.el.dataset.path}`
           this.restore()
+          this.fetch()
           this.onToggle = () => {
+            this.fetch()
             if (this.restoring) { this.restoring = false; return }
             try { localStorage.setItem(this.key, this.el.open ? "open" : "closed") } catch (_) {}
             if (!this.el.open && this.el.getBoundingClientRect().top < 0) {
@@ -297,7 +344,17 @@ defmodule MergeWeb.MergeRequestComponents do
           }
           this.el.addEventListener("toggle", this.onToggle)
         },
-        updated() { this.restore() },
+        updated() { this.restore(); this.fetch() },
+        // A file that starts folded has no lines on the page until it is
+        // opened (the others come by themselves, in order): ask for them once.
+        fetch() {
+          const d = this.el.dataset
+          if (d.loaded === "true") this.asked = false
+          if (this.el.open && d.loaded === "false" && d.waits === "true" && !this.asked) {
+            this.asked = true
+            this.pushEvent("open_file", {index: Number(d.index)})
+          }
+        },
         destroyed() { this.el.removeEventListener("toggle", this.onToggle) },
         restore() {
           let kept = null
@@ -312,6 +369,57 @@ defmodule MergeWeb.MergeRequestComponents do
         }
       }
     </script>
+    """
+  end
+
+  @doc """
+  True for a file whose diff starts folded: one nobody reads line by line
+  (`Merge.Groups.quiet?/1`), or a very long one. Its lines are sent when it
+  is opened.
+  """
+  def starts_folded?(file), do: Merge.Groups.quiet?(file) or lines(file) > 600
+
+  @doc "How many lines a file's diff has."
+  def lines(file), do: Enum.reduce(file.hunks, 0, &(length(&1.lines) + &2))
+
+  @doc "True for an agent's answer to a comment."
+  def reply?(comment), do: Map.get(comment, :reply_to) != nil
+
+  attr :comment, :map, required: true
+  attr :addressed, :list, default: []
+  attr :replies, :list, default: []
+  attr :seen_by, :list, default: []
+  attr :show_location, :boolean, default: false
+
+  @doc "One comment, with the commits that addressed it, who has seen it, and its replies."
+  def comment(assigns) do
+    ~H"""
+    <div class="text-sm">
+      <div class="flex flex-wrap items-baseline gap-x-2 text-xs text-(--text-muted)">
+        <span :if={reply?(@comment)} class="text-(--text-faint)">↳</span>
+        <span class="font-medium text-(--text)">{@comment.author}</span>
+        <span :if={@show_location && @comment.path} class="font-mono">
+          {@comment.path}:{@comment.line}{if @comment.side == "old", do: " (old)"}{if @comment.commit,
+            do: " in " <> String.slice(@comment.commit, 0, 7)}
+        </span>
+        <span>{ago(@comment.at)}</span>
+      </div>
+      <p class="mt-0.5 whitespace-pre-wrap text-(--text)">{@comment.body}</p>
+      <p :for={a <- @addressed} class="mt-1 text-xs text-(--info-text)">
+        ↳ addressed in <span class="font-mono">{a.short}</span>{if a.note, do: ": " <> a.note}
+      </p>
+      <p :if={@seen_by != []} class="mt-1 text-xs text-(--text-muted)">
+        <.icon name="hero-eye-micro" class="size-3.5 align-[-2px]" />
+        Seen by {Enum.join(@seen_by, ", ")}
+      </p>
+      <div
+        :for={r <- @replies}
+        id={"reply-#{r.id}"}
+        class="mt-2 ml-4 rounded-md bg-(--surface-2) px-2.5 py-1.5"
+      >
+        <.comment comment={r} />
+      </div>
+    </div>
     """
   end
 

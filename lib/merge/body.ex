@@ -44,6 +44,8 @@ defmodule Merge.Body do
       extension: [table: true, strikethrough: true, autolink: true, tasklist: true],
       render: [unsafe: false]
     )
+    # A picture is fetched when it comes near the screen, not with the page.
+    |> String.replace("<img ", ~s(<img loading="lazy" decoding="async" ))
   end
 
   defp inline_images(body) do
@@ -55,7 +57,16 @@ defmodule Merge.Body do
 
   # The image, linked to itself so a tap opens it full size.
   defp image(path, alt) do
-    url = MergeWeb.shot_path(path)
+    url = MergeWeb.shot_path(path, version(path))
     "[![#{alt}](#{url})](#{url})"
+  end
+
+  # When the file was last written: in the picture's address, so the browser
+  # keeps it between visits and still fetches a screenshot that was retaken.
+  defp version(path) do
+    case File.stat(path, time: :posix) do
+      {:ok, %{mtime: mtime}} -> mtime
+      _ -> nil
+    end
   end
 end

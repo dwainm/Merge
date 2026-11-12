@@ -108,7 +108,6 @@ defmodule MergeWeb.DriftLive do
               file={file}
               index={file.index}
               stacked={length(@groups) > 1}
-              quiet={Groups.quiet?(file)}
             />
           </.diff_group>
         </section>
