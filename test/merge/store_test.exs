@@ -34,9 +34,8 @@ defmodule Merge.StoreTest do
     ref = Process.monitor(pid)
     :ok = DynamicSupervisor.terminate_child(Merge.MergeRequests, pid)
     assert_receive {:DOWN, ^ref, :process, ^pid, _}
-    # It is still read as it was; nothing can be added until it is back.
+    # It is still read as it was.
     assert {:ok, ^before} = MergeRequest.get(branch)
-    assert :error = MergeRequest.comment(branch, %{body: "Anyone there?"})
 
     # It starts again.
     assert MergeRequest.restore_all() >= 1

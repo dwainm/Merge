@@ -138,10 +138,16 @@ defmodule Merge.Watcher do
     # on; it reads everything again itself, and holds on anything it can't prove.
     Merge.AutoPush.run()
 
-    Enum.each(mrs, fn mr ->
+    # A settled one (closed, or merged and on origin) has nothing to look at.
+    mrs
+    |> Enum.reject(&MergeRequest.settled?/1)
+    |> Enum.each(fn mr ->
       MergeRequest.check_branch(mr.branch)
       MergeRequest.check_merged(mr.branch)
     end)
+
+    # And needs no process: it rests, listed, its diff in its file.
+    MergeRequest.rest_settled()
 
     # After the branches are looked at, so a conflict that is gone is gone here too.
     Merge.AutoMerge.run()
