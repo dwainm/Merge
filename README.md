@@ -49,7 +49,7 @@ No GitHub and no database: each merge request is a process, gone when the server
 `branch-gone`, `merged`, `auto-merged` (after the `merged` line of a merge Merge made itself:
 `auto-merged checkin 1a2b3c4`), `auto-merge-held` (once per reason: `auto-merge-held checkin
 main's worktree has uncommitted changes`), `on-origin`, `closed`, and for `main`: `main-tip`, `checks-running`,
-`checks-passed`, `checks-failed`, `image-running`, `image-passed`, `image-failed`, `pushed`,
+`checks-passed`, `checks-failed`, `checks-not-run`, `image-running`, `image-passed`, `image-failed`, `image-not-run`, `pushed`,
 `push-failed`, `auto-push-on`, `auto-push-off`, and `auto-pushed` (beside the `pushed` line
 of a push the timer made: `auto-pushed main 3 commits, origin at 1a2b3c4`). The lines are kept in
 `~/.merge/events.log`; `--since` (a time, or an age like `30m`) replays them. It reconnects
@@ -150,6 +150,11 @@ output) and beside it "Image build passed / running / failed / not needed";
 once, unless it was superseded before its turn) says in its confirmation whether
 that commit's checks and image build passed, and asks to push anyway when they
 haven't. Results are kept per commit on disk.
+
+A check that is cut off (the server stopped under it, or its command was killed) was
+not run: it leaves no result, says `checks-not-run`, and runs again within a minute while
+that commit is still main's tip. Cut off twice, it is recorded as failed. One run may
+take 45 minutes.
 
 The flow for a coordinator: an approved branch merges itself (see "Merging by
 itself"); wait for "Checks passed" on the tip, then Push All from the home page,

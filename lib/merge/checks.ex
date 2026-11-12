@@ -25,6 +25,11 @@ defmodule Merge.Checks do
   @keep 30
   @tail_lines 80
   @timeout_ms 45 * 60_000
+  # A command ended by a signal: hangup, interrupt, kill, terminate (128 + its number).
+  @signals [129, 130, 137, 143]
+  # Cut off this many times, a commit's check is recorded as failed, so a command
+  # that kills itself doesn't run for ever.
+  @cut_limit 2
 
   def topic, do: "checks"
 
@@ -33,19 +38,65 @@ defmodule Merge.Checks do
   end
 
   @doc "True when a check command is configured."
-  def enabled?(server \\ __MODULE__), do: GenServer.call(server, :enabled?)
+  def enabled?(server \\ __MODULE__) do
+    case Merge.Board.view({__MODULE__, server}) do
+      nil -> GenServer.call(server, :enabled?)
+      view -> view.command?
+    end
+  end
 
   @doc "Asks for `sha` of `repo` to be checked, unless it has been or is being."
   def want(repo, sha, server \\ __MODULE__), do: GenServer.cast(server, {:want, repo, sha})
 
   @doc "`:none`, `{:running, started_at}`, `{:queued, nil}` or the result for `sha`."
-  def status(sha, server \\ __MODULE__), do: GenServer.call(server, {:status, sha})
+  def status(sha, server \\ __MODULE__) do
+    case Merge.Board.view({__MODULE__, server}) do
+      nil -> GenServer.call(server, {:status, sha})
+      view -> status_in(view, result(view, server, :check, sha), sha)
+    end
+  end
 
   @doc """
   The image check of `sha`: `:off` without an image command, `:not_needed`,
   `:none`, `{:running, started_at}`, `{:queued, nil}` or its result.
   """
-  def image_status(sha, server \\ __MODULE__), do: GenServer.call(server, {:image_status, sha})
+  def image_status(sha, server \\ __MODULE__) do
+    case Merge.Board.view({__MODULE__, server}) do
+      nil -> GenServer.call(server, {:image_status, sha})
+      view -> image_status_in(view, result(view, server, :image, sha), sha)
+    end
+  end
+
+  # The checks' state is read from the board (`Merge.Board`), where the checks'
+  # process publishes it on every change: `view` is who runs and who waits, and
+  # each result is a row of its own, so a page copies only the one it shows.
+  # No page asks the process, which may be busy checking out a commit.
+  defp result(view, server, kind, sha) do
+    if sha in Map.fetch!(view.shas, kind),
+      do: Merge.Board.view({__MODULE__, server, kind, sha})
+  end
+
+  defp status_in(view, result, sha) do
+    cond do
+      result -> result
+      match?(%{kind: :check, sha: ^sha}, view.running) -> {:running, view.running.started_at}
+      view.next == sha -> {:queued, nil}
+      true -> :none
+    end
+  end
+
+  defp image_status_in(view, result, sha) do
+    waiting? = match?(%{kind: :check, sha: ^sha}, view.running) or view.next == sha
+
+    cond do
+      not view.image? -> :off
+      result -> result
+      match?(%{kind: :image, sha: ^sha}, view.running) -> {:running, view.running.started_at}
+      view.image_needed[sha] == false -> :not_needed
+      view.image_needed[sha] && waiting? -> {:queued, nil}
+      true -> :none
+    end
+  end
 
   @doc """
   The check that speaks for a merged merge request, as `{sha, status}`: its
@@ -94,36 +145,19 @@ defmodule Merge.Checks do
       next: nil
     }
 
-    {:ok, state}
+    {:ok, publish(state)}
   end
 
   @impl true
   def handle_call(:enabled?, _from, state), do: {:reply, state.command != nil, state}
 
+  # Asked only until this process has published (one running since before the board).
   def handle_call({:status, sha}, _from, state) do
-    reply =
-      cond do
-        result = state.results[sha] -> result
-        running?(state, :check, sha) -> {:running, state.running.started_at}
-        state.next && elem(state.next, 1) == sha -> {:queued, nil}
-        true -> :none
-      end
-
-    {:reply, reply, state}
+    {:reply, status_in(view(state), state.results[sha], sha), publish(state)}
   end
 
   def handle_call({:image_status, sha}, _from, state) do
-    reply =
-      cond do
-        state.image_command == nil -> :off
-        result = state.image_results[sha] -> result
-        running?(state, :image, sha) -> {:running, state.running.started_at}
-        state.image_needed[sha] == false -> :not_needed
-        state.image_needed[sha] && waiting?(state, sha) -> {:queued, nil}
-        true -> :none
-      end
-
-    {:reply, reply, state}
+    {:reply, image_status_in(view(state), state.image_results[sha], sha), publish(state)}
   end
 
   def handle_call({:log, kind, sha}, _from, state) do
@@ -139,14 +173,17 @@ defmodule Merge.Checks do
   def handle_cast({:want, _repo, _sha}, %{command: nil} = state), do: {:noreply, state}
 
   def handle_cast({:want, repo, sha}, state) do
-    state = decide_image(state, repo, sha)
+    state = state |> lost_run() |> decide_image(repo, sha)
 
-    cond do
-      todo(state, sha) == nil -> {:noreply, state}
-      state.running && state.running.sha == sha -> {:noreply, state}
-      state.running -> {:noreply, %{state | next: {repo, sha}}}
-      true -> {:noreply, start(state, repo, sha)}
-    end
+    state =
+      cond do
+        todo(state, sha) == nil -> state
+        state.running && state.running.sha == sha -> state
+        state.running -> %{state | next: {repo, sha}}
+        true -> start(state, repo, sha)
+      end
+
+    {:noreply, publish(state)}
   end
 
   @impl true
@@ -154,23 +191,111 @@ defmodule Merge.Checks do
     {:noreply, %{state | running: %{run | log: [data | run.log]}}}
   end
 
+  # Killed from outside (the server stopping takes its commands with it): the
+  # commit was not checked, which is not the same as failing.
+  def handle_info({port, {:exit_status, status}}, %{running: %{port: port}} = state)
+      when status in @signals do
+    {:noreply, publish(cut_off(state))}
+  end
+
   def handle_info({port, {:exit_status, status}}, %{running: %{port: port}} = state) do
-    {:noreply, finish(state, status == 0)}
+    {:noreply, publish(finish(state, status == 0))}
   end
 
   def handle_info({:timeout, kind, sha}, %{running: %{kind: kind, sha: sha, port: port}} = state) do
     Port.close(port)
     state = update_in(state.running.log, &["\n[merge] Stopped after 45 minutes.\n" | &1])
-    {:noreply, finish(state, false)}
+    {:noreply, publish(finish(state, false))}
   end
 
   def handle_info(_msg, state), do: {:noreply, state}
 
+  # What pages read (`status/2`, `image_status/2`), and each result in a row of
+  # its own; rows of results that were trimmed away go.
+  defp view(state) do
+    %{
+      command?: state.command != nil,
+      image?: state.image_command != nil,
+      running: state.running && Map.take(state.running, [:kind, :sha, :started_at]),
+      next: state.next && elem(state.next, 1),
+      image_needed: state.image_needed,
+      shas: %{check: Map.keys(state.results), image: Map.keys(state.image_results)}
+    }
+  end
+
+  defp publish(state) do
+    with {:registered_name, server} when is_atom(server) <-
+           Process.info(self(), :registered_name) do
+      view = view(state)
+      shown = Process.get(:shown, %{check: %{}, image: %{}})
+
+      for {kind, results} <- [check: state.results, image: state.image_results] do
+        for {sha, result} <- results,
+            shown[kind][sha] != result.finished_at,
+            do: Merge.Board.put_view({__MODULE__, server, kind, sha}, result)
+
+        for {sha, _} <- shown[kind],
+            not is_map_key(results, sha),
+            do: Merge.Board.drop_view({__MODULE__, server, kind, sha})
+      end
+
+      Process.put(:shown, %{
+        check: Map.new(state.results, fn {sha, r} -> {sha, r.finished_at} end),
+        image: Map.new(state.image_results, fn {sha, r} -> {sha, r.finished_at} end)
+      })
+
+      Merge.Board.put_view({__MODULE__, server}, view)
+    end
+
+    state
+  end
+
+  # The command is gone and its end never arrived (a message that comes while
+  # the code is being loaded is dropped): seen gone on two requests running, a
+  # minute apart, the run counts as cut off.
+  defp lost_run(%{running: %{port: port} = run} = state) when is_port(port) do
+    cond do
+      Port.info(port) != nil -> state
+      Map.get(run, :gone?) -> cut_off(state)
+      true -> %{state | running: Map.put(run, :gone?, true)}
+    end
+  end
+
+  defp lost_run(state), do: state
+
+  # A run that was cut off leaves no result: the commit shows as not checked
+  # and is checked again when it is next asked for (each minute, while it is
+  # main's tip). After `@cut_limit` times it is recorded as failed.
+  defp cut_off(%{running: run} = state) do
+    cuts = Map.get(state, :cuts, %{})
+    times = Map.get(cuts, {run.kind, run.sha}, 0) + 1
+
+    if times >= @cut_limit do
+      state = update_in(state.running.log, &["\n[merge] Cut off #{times} times.\n" | &1])
+      finish(Map.put(state, :cuts, Map.delete(cuts, {run.kind, run.sha})), false)
+    else
+      if run.timer, do: Process.cancel_timer(run.timer)
+      log = IO.iodata_to_binary(Enum.reverse(["\n[merge] Cut off before it ended.\n" | run.log]))
+      write_log(state, run.kind, run.sha, log)
+      what = if run.kind == :check, do: "checks-not-run", else: "image-not-run"
+      Merge.Events.emit(what, "main", "#{Merge.Events.short(run.sha)} cut off, runs again")
+
+      state =
+        state
+        |> Map.put(:cuts, Map.put(cuts, {run.kind, run.sha}, times))
+        |> Map.put(:running, nil)
+
+      broadcast(state, run.sha)
+
+      case state.next do
+        {repo, sha} -> start(%{state | next: nil}, repo, sha)
+        nil -> state
+      end
+    end
+  end
+
   defp running?(state, kind, sha),
     do: match?(%{kind: ^kind, sha: ^sha}, state.running)
-
-  defp waiting?(state, sha),
-    do: running?(state, :check, sha) or match?({_, ^sha}, state.next)
 
   # Decided once per commit, against origin/main as it is when the commit is wanted.
   defp decide_image(%{image_command: nil} = state, _repo, _sha), do: state
@@ -238,8 +363,7 @@ defmodule Merge.Checks do
           timer: timer
         }
 
-        broadcast(sha)
-        %{state | running: run}
+        broadcast(%{state | running: run}, sha)
 
       {:error, output} ->
         run = %{
@@ -302,7 +426,7 @@ defmodule Merge.Checks do
     event = event(run.kind, if(ok?, do: "passed", else: "failed"))
     Merge.Events.emit(event, "main", "#{Merge.Events.short(run.sha)} in #{seconds}s")
     state = state |> Map.put(key, results) |> Map.put(:running, nil)
-    broadcast(run.sha)
+    broadcast(state, run.sha)
 
     # A newer tip waiting goes first: the image check of a superseded one is skipped.
     case state.next do
@@ -343,7 +467,12 @@ defmodule Merge.Checks do
     end
   end
 
-  defp broadcast(sha), do: Phoenix.PubSub.broadcast(Merge.PubSub, topic(), {:checks, sha})
+  # Published before anyone is told, so whoever hears reads the new state.
+  defp broadcast(state, sha) do
+    publish(state)
+    Phoenix.PubSub.broadcast(Merge.PubSub, topic(), {:checks, sha})
+    state
+  end
 
   defp load(nil), do: %{}
   defp load(store), do: Merge.Store.get_named(store) || %{}
