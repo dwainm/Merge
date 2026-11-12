@@ -567,6 +567,15 @@ defmodule MergeWeb.MergeRequestLive do
         class="mb-4 rounded-lg border border-(--border) bg-(--surface) px-3 py-2 text-sm"
       />
 
+      <p
+        :if={@mr[:reading]}
+        id="reading-branch"
+        class="mb-4 flex items-center gap-2 rounded-lg border border-(--border) bg-(--surface) px-3 py-2 text-sm text-(--text-muted)"
+      >
+        <.icon name="hero-arrow-path" class="size-4 shrink-0 animate-spin" />
+        Reading the branch. The commits and changes below fill in when it is done.
+      </p>
+
       <div
         :if={not MergeRequest.done?(@mr) and match?(%{result: {:conflicts, _}}, @mr[:merge_check])}
         id="conflicts-banner"
