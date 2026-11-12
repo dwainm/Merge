@@ -42,4 +42,40 @@ defmodule Merge.RestoreMissingTest do
     # Running ones are left as they are.
     assert MergeRequest.restore_missing() == 0
   end
+
+  test "opening a branch whose process died brings it back, comments and all", c do
+    {:ok, _, :opened} = MergeRequest.open(%{branch: c.branch, repo: c.repo, opened_by: "agent"})
+    {:ok, _} = MergeRequest.comment(c.branch, %{body: "Why empty?"})
+
+    [{pid, _}] = Registry.lookup(Merge.Registry, c.branch)
+    ref = Process.monitor(pid)
+    Process.exit(pid, :kill)
+    assert_receive {:DOWN, ^ref, :process, ^pid, :killed}
+    _ = :sys.get_state(Merge.Registry.PIDPartition0)
+
+    assert {:ok, mr, :existing} =
+             MergeRequest.open(%{branch: c.branch, repo: c.repo, opened_by: "agent"})
+
+    assert [%{body: "Why empty?"}] = mr.comments
+  end
+
+  test "the watcher sets its next round from any message, not only from a round" do
+    pid = Process.whereis(Merge.Watcher)
+    timer = fn -> pid |> Process.info(:dictionary) |> elem(1) |> Keyword.get(:round_timer) end
+    # Off in tests: no rounds, no timer.
+    assert timer.() == nil
+
+    Application.put_env(:merge, :watch_ms, 3_600_000)
+
+    on_exit(fn ->
+      Application.delete_env(:merge, :watch_ms)
+      if ref = timer.(), do: Process.cancel_timer(ref)
+      :sys.replace_state(pid, fn state -> Process.delete(:round_timer) && state end)
+    end)
+
+    # As after a tick was dropped: nothing set, and an approval's message arrives.
+    Merge.Watcher.schedule_auto_push()
+    _ = :sys.get_state(pid)
+    assert is_integer(Process.read_timer(timer.()))
+  end
 end
