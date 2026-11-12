@@ -51,60 +51,44 @@ if config_env() == :dev do
 end
 
 if config_env() == :prod do
-  # The secret key base is used to sign/encrypt cookies and other secrets.
-  # A default value is used in config/dev.exs and config/test.exs but you
-  # want to use a different value for prod and you most likely don't want
-  # to check this value into version control, so we use an environment
-  # variable instead.
+  # The built release the service runs (`bin/merge deploy`). It listens on
+  # localhost only, like the development server: there is no sign-in, and the
+  # tailnet is the only way in from a phone.
+  #
+  # The key that signs sessions is kept beside what the server keeps
+  # (`~/.merge/secret_key_base`, or under MERGE_HOME), made on the first start.
   secret_key_base =
     System.get_env("SECRET_KEY_BASE") ||
-      raise """
-      environment variable SECRET_KEY_BASE is missing.
-      You can generate one by calling: mix phx.gen.secret
-      """
+      (
+        home =
+          case System.get_env("MERGE_HOME") do
+            home when home not in [nil, ""] -> Path.expand(home)
+            _ -> Path.join(System.user_home!(), ".merge")
+          end
 
-  host = System.get_env("PHX_HOST") || "example.com"
+        file = Path.join(home, "secret_key_base")
+
+        case File.read(file) do
+          {:ok, key} when byte_size(key) >= 64 ->
+            String.trim(key)
+
+          _ ->
+            key = 48 |> :crypto.strong_rand_bytes() |> Base.encode64()
+            File.mkdir_p!(home)
+            File.write!(file, key)
+            File.chmod!(file, 0o600)
+            key
+        end
+      )
 
   config :merge, MergeWeb.Endpoint,
-    url: [host: host, port: 443, scheme: "https"],
-    http: [
-      # Enable IPv6 and bind on all interfaces.
-      # Set it to  {0, 0, 0, 0, 0, 0, 0, 1} for local network only access.
-      # See the documentation on https://bandit.hexdocs.pm/Bandit.html#t:options/0
-      # for details about using IPv6 vs IPv4 and loopback vs public addresses.
-      ip: {0, 0, 0, 0, 0, 0, 0, 0}
-    ],
-    secret_key_base: secret_key_base
-
-  # ## SSL Support
-  #
-  # To get SSL working, you will need to add the `https` key
-  # to your endpoint configuration:
-  #
-  #     config :merge, MergeWeb.Endpoint,
-  #       https: [
-  #         ...,
-  #         port: 443,
-  #         cipher_suite: :strong,
-  #         keyfile: System.get_env("SOME_APP_SSL_KEY_PATH"),
-  #         certfile: System.get_env("SOME_APP_SSL_CERT_PATH")
-  #       ]
-  #
-  # The `cipher_suite` is set to `:strong` to support only the
-  # latest and more secure SSL ciphers. This means old browsers
-  # and clients may not be supported. You can set it to
-  # `:compatible` for wider support.
-  #
-  # `:keyfile` and `:certfile` expect an absolute path to the key
-  # and cert in disk or a relative path inside priv, for example
-  # "priv/ssl/server.key". For all supported SSL configuration
-  # options, see https://plug.hexdocs.pm/Plug.SSL.html#configure/1
-  #
-  # We also recommend setting `force_ssl` in your config/prod.exs,
-  # ensuring no data is ever sent via http, always redirecting to https:
-  #
-  #     config :merge, MergeWeb.Endpoint,
-  #       force_ssl: [hsts: true]
-  #
-  # Check `Plug.SSL` for all available options in `force_ssl`.
+    # A stop doesn't wait for connections to end by themselves: an agent's
+    # wait is held open for 50 seconds and asks again when it is cut, and a
+    # page connects again. A second each, so a restart is a few seconds.
+    http: [ip: {127, 0, 0, 1}, thousand_island_options: [shutdown_timeout: 1_000]],
+    drainer: [shutdown: 1_000],
+    secret_key_base: secret_key_base,
+    # The name it is reached by is Caddy's, on the tailnet, as in development.
+    check_origin: false,
+    server: true
 end

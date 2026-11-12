@@ -7,6 +7,10 @@ export MERGE_CWD="$PWD"
 cd "$root"
 case "$1" in
   serve) shift; exec mix merge.serve "$@" ;;
+  # Builds the release and puts the service on it (see bin/deploy).
+  deploy) shift; exec "$root/bin/deploy" "$@" ;;
+  # Builds the release and puts the service on it (see bin/deploy).
+  deploy) shift; exec "$root/bin/deploy" "$@" ;;
   # Quiet, so a compile message never lands in what an agent reads.
   *) MIX_QUIET=1 exec mix merge "$@" ;;
 esac

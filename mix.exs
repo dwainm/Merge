@@ -11,8 +11,15 @@ defmodule Merge.MixProject do
       aliases: aliases(),
       deps: deps(),
       compilers: [:phoenix_live_view] ++ Mix.compilers(),
+      releases: releases(),
       listeners: [Phoenix.CodeReloader]
     ]
+  end
+
+  # The release the service runs (`bin/merge deploy`). It uses this machine's
+  # own Erlang, so the commands it starts (the checks' `mix`) see the same one.
+  defp releases do
+    [merge: [include_erts: false, include_executables_for: [:unix]]]
   end
 
   # Configuration for the OTP application.
