@@ -53,6 +53,11 @@ defmodule Merge.MergeRequest do
 
   @list_topic "merge_requests"
 
+  # How long a caller waits for a reading of the branch it asked for: a
+  # command (open, addressed, merged), and the watcher's look each minute.
+  @settle_ms 60_000
+  @look_ms 20_000
+
   defstruct [
     :branch,
     :base,
@@ -85,7 +90,9 @@ defmodule Merge.MergeRequest do
     seq: 0,
     cursors: %{},
     # The waiting names the pages were last told (not saved).
-    waiting_shown: []
+    waiting_shown: [],
+    # The reading of the branch from git that is under way (not saved): see `read/3`.
+    job: nil
   ]
 
   ## API
@@ -161,13 +168,37 @@ defmodule Merge.MergeRequest do
     end
   end
 
+  # The branch and its base are looked up here, by whoever opens it: the merge
+  # request's own process never runs git (see `read/3`).
   defp open_new(attrs, branch) do
-    case DynamicSupervisor.start_child(Merge.MergeRequests, {__MODULE__, attrs}) do
-      {:ok, _pid} -> {:ok, get!(branch), :opened}
-      {:error, {:already_started, _pid}} -> open(attrs)
-      {:error, reason} -> {:error, reason}
+    repo = Path.expand(attrs[:repo] || File.cwd!())
+    base = blank_to_nil(attrs[:base]) || Git.default_base(repo)
+
+    with {:ok, _} <- Git.rev_parse(repo, base),
+         {:ok, head} <- Git.rev_parse(repo, branch) do
+      attrs =
+        Map.merge(attrs, %{repo: repo, base: base, head: head, git_dir: Git.common_dir(repo)})
+
+      case DynamicSupervisor.start_child(Merge.MergeRequests, {__MODULE__, attrs}) do
+        {:ok, _pid} ->
+          # Answers once the commits and the diff are read, or as it is by then.
+          settle(branch)
+          {:ok, get!(branch), :opened}
+
+        {:error, {:already_started, _pid}} ->
+          open(attrs)
+
+        {:error, reason} ->
+          {:error, reason}
+      end
     end
   end
+
+  @doc """
+  Waits until the reading of the branch that is under way is in (at most a
+  minute). The merge request answers everything else meanwhile.
+  """
+  def settle(branch), do: call(branch, :settled, @settle_ms)
 
   def start_link({:restore, state}) do
     GenServer.start_link(__MODULE__, {:restore, state}, name: via(state.branch))
@@ -330,8 +361,22 @@ defmodule Merge.MergeRequest do
   starts a new round. `groups` (or a `groups` block in the note) replaces how
   the files group.
   """
-  def addressed(branch, commit, note \\ nil, by \\ nil, groups \\ nil),
-    do: call(branch, {:addressed, commit, note, by, groups})
+  def addressed(branch, commit, note \\ nil, by \\ nil, groups \\ nil) do
+    # The commit is looked up here, by the caller, not in the process.
+    with {:ok, mr} <- get(branch),
+         false <- done?(mr),
+         repo = git_repo(mr),
+         {:ok, sha} <- Git.rev_parse(repo, commit),
+         true <- Git.on_branch?(repo, sha, mr.branch) || {:error, :not_on_branch} do
+      call(branch, {:addressed, sha, note, by, groups}, @settle_ms)
+    else
+      # Done: the process says so, in its own words.
+      true -> call(branch, {:addressed, commit, note, by, groups})
+      {:error, :not_on_branch} -> {:error, "#{commit} is not on #{branch}."}
+      {:error, message} -> {:error, message}
+      :error -> :error
+    end
+  end
 
   @doc """
   Waits for news for the agent `name`: a comment or a decision it hasn't been
@@ -355,20 +400,20 @@ defmodule Merge.MergeRequest do
   origin/main) that brought the branch head in. Answers `{:ok, merged}` or
   `{:error, message}` when the branch isn't on main.
   """
-  def merged(branch, commit \\ nil), do: call(branch, {:merged, commit, :manual})
+  def merged(branch, commit \\ nil), do: call(branch, {:merged, commit, :manual}, @settle_ms)
 
   @doc "Looks at the branch again: new commits, a rewrite or a deletion, and whether it merges cleanly."
-  def check_branch(branch), do: call(branch, :check_branch)
+  def check_branch(branch), do: call(branch, :check_branch, @look_ms)
 
   @doc "Marks it merged if git says it is, and notes when the merge reaches origin/main."
-  def check_merged(branch), do: call(branch, {:merged, nil, :auto})
+  def check_merged(branch), do: call(branch, {:merged, nil, :auto}, @look_ms)
 
   @doc "Marks it merged (when approved) or closed, and tells the waiting agents. It stays, read-only."
   def close(branch), do: call(branch, :close)
 
-  defp call(branch, msg) do
+  defp call(branch, msg, timeout \\ 5_000) do
     case lookup(branch) do
-      {:ok, pid} -> GenServer.call(pid, msg)
+      {:ok, pid} -> GenServer.call(pid, msg, timeout)
       :error -> :error
     end
   catch
@@ -397,47 +442,33 @@ defmodule Merge.MergeRequest do
     {:ok, state}
   end
 
+  # No git here: `open_new/2` looked up the base and the head. The commits,
+  # the diff and the trial merge are read behind it (`read/3`); "opened" is
+  # said once they are in.
   def init(attrs) do
-    repo = Path.expand(attrs[:repo] || File.cwd!())
-    base = blank_to_nil(attrs[:base]) || Git.default_base(repo)
-    branch = attrs.branch
+    opened_by = blank_to_nil(attrs[:opened_by]) || "agent"
+    {body, groups} = Merge.Body.split_groups(attrs[:body])
 
-    with {:ok, _} <- Git.rev_parse(repo, base),
-         {:ok, _} <- Git.rev_parse(repo, branch) do
-      opened_by = blank_to_nil(attrs[:opened_by]) || "agent"
-      {body, groups} = Merge.Body.split_groups(attrs[:body])
+    state =
+      %__MODULE__{
+        branch: attrs.branch,
+        base: attrs.base,
+        repo: attrs.repo,
+        title: blank_to_nil(attrs[:title]) || attrs.branch,
+        body: body,
+        groups: blank_to_nil(attrs[:groups]) || groups,
+        opened_by: opened_by,
+        opened_at: DateTime.utc_now(),
+        agents: [opened_by],
+        git_dir: attrs[:git_dir],
+        head: attrs.head
+      }
+      |> read(:opened)
 
-      state =
-        %__MODULE__{
-          branch: branch,
-          base: base,
-          repo: repo,
-          title: blank_to_nil(attrs[:title]) || branch,
-          body: body,
-          groups: blank_to_nil(attrs[:groups]) || groups,
-          opened_by: opened_by,
-          opened_at: DateTime.utc_now(),
-          agents: [opened_by],
-          git_dir: Git.common_dir(repo)
-        }
-        |> refresh()
-        |> merge_check()
-
-      Merge.Store.put(saved(state))
-      publish(state)
-
-      Events.emit(
-        "opened",
-        branch,
-        "#{state.title} (#{length(own_commits(state))} commits) by #{opened_by}"
-      )
-
-      emit_changes(%{state | merge_check: nil}, state)
-      broadcast_list()
-      {:ok, state}
-    else
-      {:error, message} -> {:stop, message}
-    end
+    Merge.Store.put(saved(state))
+    publish(state)
+    broadcast_list()
+    {:ok, state}
   end
 
   @impl true
@@ -493,7 +524,7 @@ defmodule Merge.MergeRequest do
 
   # Merging is checked before the done-is-read-only rule: a closed one can still
   # be marked merged by hand, and a merged one learns when it reaches GitHub.
-  def handle_call({:merged, commit, mode}, _from, state) do
+  def handle_call({:merged, commit, mode}, from, state) do
     cond do
       state.merged && state.merged.pushed ->
         {:reply, {:ok, state.merged}, state}
@@ -502,32 +533,22 @@ defmodule Merge.MergeRequest do
         {:reply, {:error, :not_merged}, state}
 
       true ->
-        case find_merge(state, commit) do
-          {:ok, info} when info == state.merged ->
-            {:reply, {:ok, info}, state}
+        # Git finds the merge behind the process; the caller hears then.
+        me = self()
+        snapshot = Map.take(state, [:repo, :git_dir, :head, :branch])
 
-          {:ok, info} ->
-            newly? = state.status != :merged or state.merged == nil
-            was_pushed? = match?(%{pushed: true}, state.merged)
+        spawn(fn ->
+          found =
+            try do
+              find_merge(snapshot, commit)
+            catch
+              _, _ -> {:error, "#{snapshot.branch} could not be read."}
+            end
 
-            state = %{
-              state
-              | status: :merged,
-                merged: info,
-                done_at: state.done_at || DateTime.utc_now()
-            }
+          send(me, {:found_merge, from, found})
+        end)
 
-            if newly?, do: Events.emit("merged", state.branch, merged_detail(info))
-
-            if info.pushed and not was_pushed?,
-              do: Events.emit("on-origin", state.branch, merged_detail(info))
-
-            state = if newly?, do: tell_closed(state), else: state
-            {:reply, {:ok, info}, changed(state)}
-
-          {:error, message} ->
-            {:reply, {:error, message}, state}
-        end
+        {:noreply, state}
     end
   end
 
@@ -535,33 +556,14 @@ defmodule Merge.MergeRequest do
       when status in [:merged, :closed],
       do: {:reply, :ok, state}
 
-  def handle_call(:check_branch, _from, state) do
-    repo = git_repo(state)
+  def handle_call(:check_branch, from, state) do
+    {:noreply, read(state, :look, {from, :ok})}
+  end
 
-    next =
-      case Git.rev_parse(repo, state.branch) do
-        {:error, _} ->
-          # Gone: keep the last diff seen.
-          Map.put(state, :branch_state, :gone)
-
-        {:ok, head} when head == state.head ->
-          state |> Map.put(:branch_state, :ok) |> merge_check()
-
-        {:ok, head} ->
-          moved =
-            if Git.ancestor?(repo, state.head, head),
-              do: :ok,
-              else: {:rewritten, String.slice(state.head, 0, 7)}
-
-          state |> refresh() |> Map.put(:branch_state, moved) |> merge_check()
-      end
-
-    emit_changes(state, next)
-
-    cond do
-      next == state -> {:reply, :ok, state}
-      next.seq > state.seq -> {:reply, :ok, changed(tell_waiters(next))}
-      true -> {:reply, :ok, changed(next)}
+  def handle_call(:settled, from, state) do
+    case Map.get(state, :job) do
+      nil -> {:reply, :ok, state}
+      job -> {:noreply, %{state | job: %{job | told: [{from, :ok} | job.told]}}}
     end
   end
 
@@ -726,42 +728,30 @@ defmodule Merge.MergeRequest do
     end
   end
 
-  def handle_call({:addressed, commit, note, by, groups}, _from, state) do
-    repo = git_repo(state)
-    before = state
+  # `sha` is on the branch: `addressed/5` looked. The caller hears once the
+  # branch is read again.
+  def handle_call({:addressed, sha, note, by, groups}, from, state) do
     {note, note_groups} = Merge.Body.split_groups(note)
     groups = blank_to_nil(groups) || note_groups || state.groups
 
-    with {:ok, sha} <- Git.rev_parse(repo, commit),
-         true <- Git.on_branch?(repo, sha, state.branch) || {:error, :not_on_branch} do
-      entry = %{
-        sha: sha,
-        short: String.slice(sha, 0, 7),
-        note: blank_to_nil(note),
-        by: blank_to_nil(by) || state.opened_by,
-        # The round it answers: the last decision's.
-        round: length(state.decisions) - 1,
-        at: DateTime.utc_now()
-      }
+    entry = %{
+      sha: sha,
+      short: String.slice(sha, 0, 7),
+      note: blank_to_nil(note),
+      by: blank_to_nil(by) || state.opened_by,
+      # The round it answers: the last decision's.
+      round: length(state.decisions) - 1,
+      at: DateTime.utc_now()
+    }
 
-      state =
-        %{state | addressed: state.addressed ++ [entry], status: :open, groups: groups}
-        |> refresh()
-        |> Map.put(:branch_state, :ok)
-        |> merge_check()
+    note = if entry.note, do: ": #{entry.note}", else: ""
+    Events.emit("addressed", state.branch, "#{entry.short} #{entry.by}#{note}")
 
-      note = if entry.note, do: ": #{entry.note}", else: ""
-      Events.emit("addressed", state.branch, "#{entry.short} #{entry.by}#{note}")
-      emit_changes(before, state)
-      state = if state.seq > before.seq, do: tell_waiters(state), else: state
-      {:reply, {:ok, entry}, changed(state)}
-    else
-      {:error, :not_on_branch} ->
-        {:reply, {:error, "#{commit} is not on #{state.branch}."}, state}
+    state =
+      %{state | addressed: state.addressed ++ [entry], status: :open, groups: groups}
+      |> read(:whole, {from, {:ok, entry}})
 
-      {:error, message} ->
-        {:reply, {:error, message}, state}
-    end
+    {:noreply, changed(state)}
   end
 
   def handle_call({:wait, name, timeout}, {pid, _} = from, state) do
@@ -805,6 +795,30 @@ defmodule Merge.MergeRequest do
       {nil, _} ->
         {:noreply, state}
     end
+  end
+
+  # The branch as git has it now (`read/3`).
+  def handle_info({:reading, pid, reading}, state) do
+    case Map.get(state, :job) do
+      %{pid: ^pid} = job -> {:noreply, take_reading(%{state | job: nil}, job, reading)}
+      _ -> {:noreply, state}
+    end
+  end
+
+  def handle_info({:found_merge, from, found}, state) do
+    {reply, state} = note_merge(state, found)
+    GenServer.reply(from, reply)
+    {:noreply, state}
+  end
+
+  # The reading died before it answered (a code load can stop it): whoever
+  # waits is let go, and it is read again at the next look.
+  def handle_info({:DOWN, ref, :process, _pid, reason}, %{job: %{ref: ref} = job} = state)
+      when reason != :normal do
+    for {from, reply} <- job.told, do: GenServer.reply(from, reply)
+    state = %{state | job: nil}
+    state = if job.kind == :look, do: state, else: changed(state)
+    {:noreply, read_next(state, job)}
   end
 
   def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
@@ -986,33 +1000,190 @@ defmodule Merge.MergeRequest do
     })
   end
 
-  # Recomputes the commits and the diff of the branch from git, against the
-  # line it merges into (`Git.own_base/3`), so all of it is the branch's own.
-  defp refresh(state) do
-    repo = git_repo(state)
-    {:ok, head} = Git.rev_parse(repo, state.branch)
-    own = Git.own_base(repo, state.base, state.branch)
+  # Git is never run in this process. A reading of the branch is taken behind
+  # it, by a process of its own, and comes back as a message
+  # (`{:reading, pid, reading}`), so the merge request answers comments,
+  # decisions and waits while git works, however long that is.
+  #
+  # `kind` is `:look` (the watcher's: commits and diff only if the head moved),
+  # `:whole` (an `addressed`: all of it again) or `:opened` (the first).
+  # `tell` is `{from, reply}`: who hears, and what, once it is in. One reading
+  # at a time: a look asked meanwhile hears with the one under way; a whole
+  # one asked meanwhile is taken after it.
+  defp read(state, kind, tell \\ nil) do
+    case Map.get(state, :job) do
+      nil ->
+        me = self()
+        snapshot = Map.take(state, [:repo, :git_dir, :branch, :base, :head, :merge_check])
+        whole? = kind != :look
+
+        {pid, ref} =
+          spawn_monitor(fn -> send(me, {:reading, self(), reading(snapshot, whole?)}) end)
+
+        job = %{pid: pid, ref: ref, kind: kind, told: List.wrap(tell), next: nil}
+        Map.put(state, :job, job)
+
+      %{} = job when kind == :look ->
+        %{state | job: %{job | told: List.wrap(tell) ++ job.told}}
+
+      %{} = job ->
+        next = List.wrap(tell) ++ (job.next || [])
+        %{state | job: %{job | next: next}}
+    end
+  end
+
+  # A whole reading asked for while one was under way is taken now.
+  defp read_next(state, %{next: nil}), do: state
+
+  defp read_next(state, %{next: told}) do
+    state = read(state, :whole)
+    %{state | job: %{state.job | told: told}}
+  end
+
+  # What git says of the branch now, worked out away from the process: `:gone`,
+  # or its head, the commits and diff (when the head moved, or all is asked),
+  # whether it was rewritten, and the trial merge into main (`:same` when
+  # neither side moved since the last).
+  defp reading(snapshot, whole?) do
+    repo = git_repo(snapshot)
+
+    case Git.rev_parse(repo, snapshot.branch) do
+      {:error, _} ->
+        :gone
+
+      {:ok, head} ->
+        moved? = head != snapshot.head
+
+        %{
+          head: head,
+          moved?: moved?,
+          rewritten?: moved? and not Git.ancestor?(repo, snapshot.head, head),
+          fresh: if(moved? or whole?, do: fresh(repo, snapshot.base, head)),
+          merge: trial_merge(repo, snapshot.base, head, snapshot.merge_check)
+        }
+    end
+  end
+
+  # The commits and the diff of the branch at `head`, against the line it
+  # merges into (`Git.own_base/3`), so all of it is the branch's own.
+  defp fresh(repo, base, head) do
+    own = Git.own_base(repo, base, head)
 
     merge_base =
-      case Git.merge_base(repo, own, state.branch) do
+      case Git.merge_base(repo, own, head) do
         {:ok, sha} -> sha
         {:error, _} -> nil
       end
 
     commits =
-      case Git.commits(repo, own, state.branch) do
+      case Git.commits(repo, own, head) do
         {:ok, commits} -> Enum.map(commits, &mark_base_merge(repo, own, &1))
         {:error, _} -> []
       end
 
     files =
-      case Git.branch_diff(repo, own, state.branch) do
+      case Git.branch_diff(repo, own, head) do
         {:ok, files} -> files
         {:error, _} -> []
       end
 
-    %{state | head: head, merge_base: merge_base, commits: commits, files: files}
-    |> Map.put(:own_base, own)
+    %{head: head, merge_base: merge_base, commits: commits, files: files, own_base: own}
+  end
+
+  # A trial merge of the branch into main (local main, where merges happen),
+  # done again only when the branch head or main's tip has moved.
+  defp trial_merge(repo, base, head, last) do
+    target = if match?({:ok, _}, Git.rev_parse(repo, "main")), do: "main", else: base
+
+    with {:ok, target_sha} <- Git.rev_parse(repo, target),
+         false <- match?(%{target: ^target_sha, head: ^head}, last),
+         result when result == :clean or elem(result, 0) == :conflicts <-
+           Git.merge_check(repo, target_sha, head) do
+      %{into: target, target: target_sha, head: head, result: result}
+    else
+      _ -> :same
+    end
+  end
+
+  # A reading is in: the merge request takes it, says what it turned up (new
+  # commits, a rewrite, a deletion, conflicts), tells whoever waited, and reads
+  # again if a whole reading was asked for meanwhile.
+  defp take_reading(state, job, reading) do
+    whole? = job.kind != :look
+
+    next =
+      case reading do
+        :gone ->
+          # Gone: keep the last diff seen.
+          Map.put(state, :branch_state, :gone)
+
+        %{} ->
+          branch_state =
+            cond do
+              whole? or not reading.moved? -> :ok
+              reading.rewritten? -> {:rewritten, String.slice(state.head, 0, 7)}
+              true -> :ok
+            end
+
+          state
+          |> Map.merge(reading.fresh || %{})
+          |> Map.put(:branch_state, branch_state)
+          |> take_merge(reading.merge)
+      end
+
+    if job.kind == :opened do
+      Events.emit(
+        "opened",
+        next.branch,
+        "#{next.title} (#{length(own_commits(next))} commits) by #{next.opened_by}"
+      )
+
+      emit_changes(%{next | merge_check: nil}, next)
+    else
+      emit_changes(state, next)
+    end
+
+    next = if next.seq > state.seq, do: tell_waiters(next), else: next
+    # A look that found nothing new says nothing.
+    next = if whole? or next != state, do: changed(next), else: next
+    for {from, reply} <- job.told, do: GenServer.reply(from, reply)
+    read_next(next, job)
+  end
+
+  defp take_merge(state, :same), do: state
+
+  defp take_merge(state, %{into: into, target: target_sha, result: result} = check) do
+    state |> note_conflicts(result, into, target_sha) |> Map.put(:merge_check, check)
+  end
+
+  # What a search for the merge found (`find_merge/2`), as `merged/2` answers it.
+  defp note_merge(state, found) do
+    case found do
+      {:ok, info} when info == state.merged ->
+        {{:ok, info}, state}
+
+      {:ok, info} ->
+        newly? = state.status != :merged or state.merged == nil
+        was_pushed? = match?(%{pushed: true}, state.merged)
+
+        state = %{
+          state
+          | status: :merged,
+            merged: info,
+            done_at: state.done_at || DateTime.utc_now()
+        }
+
+        if newly?, do: Events.emit("merged", state.branch, merged_detail(info))
+
+        if info.pushed and not was_pushed?,
+          do: Events.emit("on-origin", state.branch, merged_detail(info))
+
+        state = if newly?, do: tell_closed(state), else: state
+        {{:ok, info}, changed(state)}
+
+      {:error, message} ->
+        {{:error, message}, state}
+    end
   end
 
   # A merge whose second parent is on the base is a merge of the base into the
@@ -1044,38 +1215,6 @@ defmodule Merge.MergeRequest do
   end
 
   defp mark_base_merge(_repo, _own, commit), do: commit
-
-  # A trial merge of the branch into main (local main, where merges happen),
-  # done again only when the branch head or main's tip has moved.
-  defp merge_check(state) do
-    repo = git_repo(state)
-    target = if match?({:ok, _}, Git.rev_parse(repo, "main")), do: "main", else: state.base
-
-    with {:ok, target_sha} <- Git.rev_parse(repo, target) do
-      case Map.get(state, :merge_check) do
-        %{target: ^target_sha, head: head} when head == state.head ->
-          state
-
-        _ ->
-          case Git.merge_check(repo, target_sha, state.head) do
-            {:error, _} ->
-              state
-
-            result ->
-              state
-              |> note_conflicts(result, target, target_sha)
-              |> Map.put(:merge_check, %{
-                into: target,
-                target: target_sha,
-                head: state.head,
-                result: result
-              })
-          end
-      end
-    else
-      _ -> state
-    end
-  end
 
   # Conflicts the agents haven't heard about become an event they're told:
   # when the branch starts conflicting, or conflicts in other files. Not once
@@ -1165,7 +1304,8 @@ defmodule Merge.MergeRequest do
   defp merged_detail(info), do: "#{info.short} #{info.subject}"
 
   # What is written to disk: everything but the waiting agents.
-  defp saved(state), do: state |> Map.from_struct() |> Map.drop([:waiters, :waiting_shown])
+  defp saved(state),
+    do: state |> Map.from_struct() |> Map.drop([:waiters, :waiting_shown, :job])
 
   # On the board before anyone is told, so whoever hears reads the new state.
   defp publish(state), do: Merge.Board.put(state.branch, public(state), summary(state))
@@ -1220,8 +1360,10 @@ defmodule Merge.MergeRequest do
   defp public(state) do
     state
     |> Map.from_struct()
-    |> Map.drop([:waiters, :waiting_shown])
+    |> Map.drop([:waiters, :waiting_shown, :job])
     |> Map.put(:waiting, waiting(state))
+    # True while it is first read, or read again for an `addressed`: the page says so.
+    |> Map.put(:reading, match?(%{kind: kind} when kind != :look, Map.get(state, :job)))
   end
 
   # The groups an open brings: `attrs.groups`, else a `groups` block in the body.
