@@ -36,20 +36,21 @@ defmodule Merge.Watcher do
   @impl true
   def init(nil) do
     # The first round once the stored merge requests are back.
-    if interval(), do: Process.send_after(self(), :tick, 5_000)
+    arm(5_000)
     {:ok, nil}
   end
 
   @impl true
   def handle_info(:tick, state) do
     run()
-    Process.send_after(self(), :tick, interval())
+    arm()
     {:noreply, schedule(state)}
   end
 
   # The moment the auto-push fell due, between rounds.
   def handle_info(:auto_push, _state) do
     Merge.AutoPush.run()
+    arm()
     {:noreply, schedule(nil)}
   end
 
@@ -60,15 +61,39 @@ defmodule Merge.Watcher do
     run()
     # Asked again while it ran (each home page load asks): that round was this one.
     drop_runs()
+    arm()
     {:noreply, schedule(state)}
   end
 
-  def handle_cast(:schedule_auto_push, state), do: {:noreply, schedule(state)}
+  def handle_cast(:schedule_auto_push, state) do
+    arm()
+    {:noreply, schedule(state)}
+  end
 
   # A merge moves main, so the auto-push's timer is set again.
   def handle_cast({:auto_merge, branch}, state) do
     Merge.AutoMerge.run(branch)
+    arm()
     {:noreply, schedule(state)}
+  end
+
+  # Sets the timer for the next round unless one is running. Every message
+  # does this, not only the round itself: a tick that arrives while the code
+  # is being loaded again is dropped by the runtime (the module isn't there
+  # to take it), and the rounds would never start again. With this the next
+  # page load or approval starts them. The timer is kept in the process
+  # dictionary, so a watcher running since before this has none and gets one.
+  defp arm(ms \\ interval()) do
+    live? =
+      case Process.get(:round_timer) do
+        ref when is_reference(ref) -> Process.read_timer(ref) != false
+        _ -> false
+      end
+
+    if interval() && not live?,
+      do: Process.put(:round_timer, Process.send_after(self(), :tick, ms))
+
+    :ok
   end
 
   defp drop_runs do

@@ -143,11 +143,29 @@ defmodule Merge.MergeRequest do
         end
 
       :error ->
-        case DynamicSupervisor.start_child(Merge.MergeRequests, {__MODULE__, attrs}) do
-          {:ok, _pid} -> {:ok, get!(branch), :opened}
+        # Kept on disk and still in review, but its process is gone (a code
+        # load can stop it): it comes back from its file first, so opening
+        # the branch again never writes a new one over its comments.
+        with %{status: status} = stored when status not in [:merged, :closed] <-
+               Merge.Store.get(branch),
+             {:ok, _pid} <-
+               DynamicSupervisor.start_child(
+                 Merge.MergeRequests,
+                 {__MODULE__, {:restore, stored}}
+               ) do
+          open(attrs)
+        else
           {:error, {:already_started, _pid}} -> open(attrs)
-          {:error, reason} -> {:error, reason}
+          _ -> open_new(attrs, branch)
         end
+    end
+  end
+
+  defp open_new(attrs, branch) do
+    case DynamicSupervisor.start_child(Merge.MergeRequests, {__MODULE__, attrs}) do
+      {:ok, _pid} -> {:ok, get!(branch), :opened}
+      {:error, {:already_started, _pid}} -> open(attrs)
+      {:error, reason} -> {:error, reason}
     end
   end
 
