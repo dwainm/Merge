@@ -268,12 +268,26 @@
 .review-dialog[open] { animation: review-rise 180ms cubic-bezier(0.2, 0.8, 0.2, 1); }
 @media (min-width: 40rem) {
   .review-dialog[open] { animation-name: review-settle; }
+  /* Just above the review bar, at its right edge where its buttons are
+     (--review-bar-h comes from the bar's .BottomSpace hook). */
+  .review-dialog {
+    margin: auto calc(max(0px, (100vw - 80rem) / 2) + 1rem) calc(var(--review-bar-h, 3.5rem) + 0.5rem) auto;
+    max-height: calc(100dvh - var(--review-bar-h, 3.5rem) - 1.5rem);
+  }
 }
+@media (min-width: 64rem) {
+  .review-dialog { margin-right: calc(max(0px, (100vw - 80rem) / 2) + 1.5rem); }
+}
+/* Approved, moving on (MergeRequestLive's #moving-on): it rises in, and the
+   line under it fills while the next one loads. */
+.moving-on { animation: review-rise 180ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+.moving-on-progress { transform-origin: left; animation: moving-on-fill 1.5s linear forwards; }
+@keyframes moving-on-fill { from { transform: scaleX(0); } }
 @keyframes review-fade { from { opacity: 0; } }
 @keyframes review-rise { from { transform: translateY(1.5rem); opacity: 0; } }
 @keyframes review-settle { from { transform: scale(0.97); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) {
-  .review-dialog[open], .review-dialog::backdrop { animation: none; }
+  .review-dialog[open], .review-dialog::backdrop, .moving-on, .moving-on-progress { animation: none; }
 }
 
 /* A tree's server rack (MergeRequestComponents.rack/1): while a Restart,
