@@ -35,10 +35,25 @@ defmodule MergeWeb.MergeRequestLive do
     {:ok,
      socket
      |> assign(branch: branch, mr: mr, picked: nil, page_title: (mr && mr.title) || branch)
-     |> assign(tree: mr && Servers.tree_for(mr, Servers.read()))
+     |> assign(tree: tree(mr, connected?(socket)))
      |> assign(line_form: blank_form(:line), review_form: blank_form(:review))
      |> assign(dialog: nil, dialog_error: nil)
      |> assign(hold: AutoMerge.hold_entry(branch))}
+  end
+
+  # The merge request's tree as the watcher last read the trees (every minute).
+  # Reading them here asked git about every merge request's repo and every
+  # server, twice a load. One not in that reading (opened since) has the
+  # watcher read again, behind the page, which hears the answer.
+  defp tree(nil, _connected?), do: nil
+
+  defp tree(mr, connected?) do
+    tree = Servers.tree_for(mr, Servers.current() || [])
+
+    if tree == nil and connected? and Process.whereis(Merge.Watcher),
+      do: Merge.Watcher.refresh()
+
+    tree
   end
 
   @impl true
