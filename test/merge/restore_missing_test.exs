@@ -32,7 +32,11 @@ defmodule Merge.RestoreMissingTest do
     assert_receive {:DOWN, ^ref, :process, ^pid, :killed}
     # The registry lets go of the name when it hears of the exit.
     _ = :sys.get_state(Merge.Registry.PIDPartition0)
-    assert MergeRequest.get(branch) == :error
+    # Pages still read it as it was (a reload no longer empties the list);
+    # nothing can be added until it is back.
+    assert MergeRequest.get(branch) == {:ok, before}
+    assert Enum.any?(MergeRequest.list(), &(&1.branch == branch))
+    assert MergeRequest.comment(branch, %{body: "Anyone there?"}) == :error
 
     assert MergeRequest.restore_missing() >= 1
     assert {:ok, mr} = MergeRequest.get(branch)
