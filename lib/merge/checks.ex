@@ -256,16 +256,17 @@ defmodule Merge.Checks do
     end
   end
 
-  # The image check goes at the lowest priority: this machine clamps its CPU under load.
-  defp executable(:check), do: System.find_executable("sh")
-  defp executable(:image), do: System.find_executable("nice") || System.find_executable("sh")
+  # Both go below the web server, the image check lowest: this machine clamps
+  # its CPU under load, and a page must not wait behind a test run.
+  defp executable(_kind), do: System.find_executable("nice") || System.find_executable("sh")
 
-  defp args(state, :check), do: ["-c", state.command]
+  defp args(state, kind) do
+    {level, command} =
+      if kind == :check, do: {"10", state.command}, else: {"19", state.image_command}
 
-  defp args(state, :image) do
     if System.find_executable("nice"),
-      do: ["-n", "19", "sh", "-c", state.image_command],
-      else: ["-c", state.image_command]
+      do: ["-n", level, "sh", "-c", command],
+      else: ["-c", command]
   end
 
   defp event(:check, what), do: "checks-" <> what

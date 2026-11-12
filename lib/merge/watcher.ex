@@ -58,6 +58,8 @@ defmodule Merge.Watcher do
   @impl true
   def handle_cast(:run, state) do
     run()
+    # Asked again while it ran (each home page load asks): that round was this one.
+    drop_runs()
     {:noreply, schedule(state)}
   end
 
@@ -67,6 +69,14 @@ defmodule Merge.Watcher do
   def handle_cast({:auto_merge, branch}, state) do
     Merge.AutoMerge.run(branch)
     {:noreply, schedule(state)}
+  end
+
+  defp drop_runs do
+    receive do
+      {:"$gen_cast", :run} -> drop_runs()
+    after
+      0 -> :ok
+    end
   end
 
   # One timer at most, for when main's tip falls due (the state is its ref).
@@ -93,6 +103,7 @@ defmodule Merge.Watcher do
 
     [Drift.repo() | Enum.map(mrs, &MergeRequest.git_repo/1)]
     |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
     |> Enum.uniq_by(&common_dir/1)
     |> Enum.each(&Git.fetch/1)
 
