@@ -139,13 +139,14 @@ defmodule Merge.Groups do
 
   @doc """
   True for a file nobody reads line by line: a lockfile, vendored or minified
-  code, built assets, a snapshot, a binary. Such a file starts folded.
+  code, built assets, a snapshot, generated types (`src/lib/commands.d.ts`),
+  a binary. Such a file starts folded.
   """
   def quiet?(%{binary?: true}), do: true
 
   def quiet?(%{path: path}) do
     path =~
-      ~r{(^|/)(vendor|node_modules|_build|deps)/|\.min\.(js|css)$|(^|/)(mix\.lock|package-lock\.json|yarn\.lock|pnpm-lock\.yaml|Gemfile\.lock|Cargo\.lock|Podfile\.lock)$|(^|/)priv/(static|resource_snapshots)/|\.snap$}
+      ~r{(^|/)(vendor|node_modules|_build|deps)/|\.min\.(js|css)$|(^|/)(mix\.lock|package-lock\.json|yarn\.lock|pnpm-lock\.yaml|Gemfile\.lock|Cargo\.lock|Podfile\.lock)$|(^|/)priv/(static|resource_snapshots)/|\.snap$|(^|/)src/lib/commands\.d\.ts$}
   end
 
   @doc """

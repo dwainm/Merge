@@ -23,7 +23,9 @@ defmodule MergeWeb do
   def mr_path(branch), do: "/mr/" <> branch
 
   @doc "The URL path that serves a screenshot named in a merge request's body."
-  def shot_path(path), do: "/shot?" <> URI.encode_query(%{path: path})
+  def shot_path(path, version \\ nil)
+  def shot_path(path, nil), do: "/shot?" <> URI.encode_query(%{path: path})
+  def shot_path(path, version), do: "/shot?" <> URI.encode_query(path: path, v: version)
 
   @doc """
   The full URL of a merge request's page: the tailnet one when the server is

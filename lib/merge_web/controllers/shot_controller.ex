@@ -9,11 +9,15 @@ defmodule MergeWeb.ShotController do
 
   alias Merge.{Body, MergeRequest}
 
-  def show(conn, %{"path" => path}) do
+  def show(conn, %{"path" => path} = params) do
     if allowed?(path) do
+      # An address that names the file's time (`v`) is that picture for good:
+      # the browser keeps it. Without one it asks each time.
+      cache = if params["v"], do: "private, max-age=31536000, immutable", else: "no-cache"
+
       conn
       |> put_resp_content_type("image/png", nil)
-      |> put_resp_header("cache-control", "no-cache")
+      |> put_resp_header("cache-control", cache)
       |> send_file(200, path)
     else
       send_resp(conn, 404, "Not found")

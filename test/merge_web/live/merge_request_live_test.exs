@@ -29,6 +29,72 @@ defmodule MergeWeb.MergeRequestLiveTest do
     refute has_element?(page, "#review-bar")
   end
 
+  describe "the files come in pieces behind the page" do
+    setup c do
+      long = Enum.map_join(1..450, "\n", &"line #{&1}") <> "\n"
+
+      GitRepo.commit!(
+        c.repo,
+        %{
+          "lib/a.ex" => long,
+          "lib/b.ex" => "defmodule B do\nend\n",
+          "mix.lock" => "%{}\n",
+          "mobile/src/lib/commands.d.ts" => "export type Commands = {}\n"
+        },
+        "A long file, a short one, a lockfile and generated types"
+      )
+
+      :ok = MergeRequest.check_branch(c.branch)
+      :ok
+    end
+
+    defp file_id(view, path),
+      do:
+        "#" <>
+          (view
+           |> element("details[data-path='#{path}']")
+           |> render()
+           |> then(&Regex.run(~r/id="(file-\d+)"/, &1))
+           |> List.last())
+
+    test "the first paint has every file's name and counts, and no lines", %{conn: conn} = c do
+      html = conn |> get(MergeWeb.mr_path(c.branch)) |> html_response(200)
+      assert html =~ "lib/a.ex"
+      assert html =~ "Loading the changes"
+      refute html =~ "line 449"
+    end
+
+    test "then the lines follow, a few files at a time, in order", %{conn: conn} = c do
+      {:ok, view, _html} = live(conn, MergeWeb.mr_path(c.branch))
+      # Each look lets the next piece land.
+      _ = render(view)
+      _ = render(view)
+      a = file_id(view, "lib/a.ex")
+      b = file_id(view, "lib/b.ex")
+
+      # The first piece is the long file alone; the short ones come with the next.
+      assert has_element?(view, "#{a} td.diff-code", "line 449")
+      refute has_element?(view, "#{a}-loading")
+      assert has_element?(view, "#{b} td.diff-code", "defmodule B")
+      refute has_element?(view, "#{b}-loading")
+    end
+
+    test "a file that starts folded is sent when it is opened", %{conn: conn} = c do
+      {:ok, view, _html} = live(conn, MergeWeb.mr_path(c.branch))
+      _ = render(view)
+
+      for path <- ["mix.lock", "mobile/src/lib/commands.d.ts"] do
+        id = file_id(view, path)
+        assert has_element?(view, "#{id}[data-waits='true'][data-loaded='false']")
+        refute has_element?(view, "#{id} td.diff-code")
+
+        index = id |> String.replace_prefix("#file-", "") |> String.to_integer()
+        render_hook(view, "open_file", %{"index" => index})
+        assert has_element?(view, "#{id}[data-loaded='true'] td.diff-code")
+      end
+    end
+  end
+
   test "a new body shows at once, with when it was updated", %{conn: conn} = c do
     {:ok, view, _html} = live(conn, MergeWeb.mr_path(c.branch))
     refute has_element?(view, "#body-updated")
