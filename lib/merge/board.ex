@@ -34,6 +34,27 @@ defmodule Merge.Board do
     :ok
   end
 
+  @doc """
+  Leaves only the summary of a merge request on the board: one that is
+  finished and resting has no process and no diff in memory
+  (`Merge.MergeRequest.rest/1`); its page reads the diff from its file.
+  """
+  def put_resting(branch, summary) do
+    ensure()
+    :ets.insert(@table, {{:summary, branch}, summary})
+    :ets.delete(@table, {:full, branch})
+    :ok
+  end
+
+  @doc "One merge request's summary, or nil."
+  def summary(branch) do
+    with true <- up?(), [{_, summary}] <- :ets.lookup(@table, {:summary, branch}) do
+      summary
+    else
+      _ -> nil
+    end
+  end
+
   @doc "Takes a merge request off the board."
   def delete(branch) do
     if up?() do

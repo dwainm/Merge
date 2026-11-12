@@ -212,10 +212,43 @@ defmodule Merge.MergeRequest do
   def restore_all do
     Merge.Store.all()
     |> Enum.count(fn state ->
-      match?(
-        {:ok, _},
-        DynamicSupervisor.start_child(Merge.MergeRequests, {__MODULE__, {:restore, state}})
-      )
+      if settled?(state) do
+        # Finished, nothing more to learn: listed, with no process (`rest/1`).
+        Merge.Board.put_resting(state.branch, summary(revived(state)))
+        false
+      else
+        match?(
+          {:ok, _},
+          DynamicSupervisor.start_child(Merge.MergeRequests, {__MODULE__, {:restore, state}})
+        )
+      end
+    end)
+  end
+
+  @doc """
+  True for a merge request with nothing more to happen to it: closed, or
+  merged and on origin. Such a one rests (`rest/1`).
+  """
+  def settled?(%{status: :closed}), do: true
+  def settled?(%{status: :merged, merged: %{pushed: true}}), do: true
+  def settled?(_mr), do: false
+
+  @doc """
+  Puts the settled merge requests that still have a process to rest: the
+  process stops, the summary stays listed, and the diff is no longer held in
+  memory; the page of one reads it from its file, and a command for one
+  (`mr wait`, `mr merged`, a new open) starts it from its file again. One
+  with an agent waiting on it, or whose file isn't kept, stays. The watcher
+  does this each round. Returns how many went to rest.
+  """
+  def rest_settled do
+    kept = MapSet.new(Merge.Store.branches())
+
+    Merge.Registry
+    |> Registry.select([{{:"$1", :_, :_}, [], [:"$1"]}])
+    |> Enum.count(fn branch ->
+      MapSet.member?(kept, branch) and settled?(Merge.Board.summary(branch) || %{}) and
+        call(branch, :rest, 5_000, false) == :rested
     end)
   end
 
@@ -237,8 +270,11 @@ defmodule Merge.MergeRequest do
 
     stored
     |> Enum.reject(&MapSet.member?(running, &1))
+    # Resting, not missing.
+    |> Enum.reject(&settled?(Merge.Board.summary(&1) || %{}))
     |> Enum.count(fn branch ->
       with %{branch: ^branch} = state <- Merge.Store.get(branch),
+           false <- rest_at_once(state),
            {:ok, _} <-
              DynamicSupervisor.start_child(Merge.MergeRequests, {__MODULE__, {:restore, state}}) do
         true
@@ -246,6 +282,17 @@ defmodule Merge.MergeRequest do
         _ -> false
       end
     end)
+  end
+
+  # A settled one found without a process and not listed (kept from before
+  # they rested): listed from its file, no process started.
+  defp rest_at_once(state) do
+    if settled?(state) do
+      Merge.Board.put_resting(state.branch, summary(revived(state)))
+      true
+    else
+      false
+    end
   end
 
   @doc """
@@ -284,9 +331,15 @@ defmodule Merge.MergeRequest do
   whatever the process is doing. `waiting` names the agents blocked in `wait/3`.
   """
   def get(branch) do
-    case Merge.Board.get(branch) do
-      nil -> call(branch, :get)
-      mr -> {:ok, mr}
+    with nil <- Merge.Board.get(branch),
+         true <- settled?(Merge.Board.summary(branch) || %{}),
+         :error <- lookup(branch),
+         %{branch: ^branch} = stored <- Merge.Store.get(branch) do
+      # Resting: its diff is in its file, read for whoever looks.
+      {:ok, public(revived(stored))}
+    else
+      %{} = mr -> {:ok, mr}
+      _ -> call(branch, :get)
     end
   end
 
@@ -387,12 +440,10 @@ defmodule Merge.MergeRequest do
   `{:ok, :timeout}`.
   """
   def wait(branch, name, timeout) do
-    case lookup(branch) do
-      {:ok, pid} -> GenServer.call(pid, {:wait, name, timeout}, timeout + 5_000)
+    case call(branch, {:wait, name, timeout}, timeout + 5_000) do
       :error -> {:error, :not_found}
+      answer -> answer
     end
-  catch
-    :exit, _ -> {:error, :not_found}
   end
 
   @doc """
@@ -403,15 +454,24 @@ defmodule Merge.MergeRequest do
   def merged(branch, commit \\ nil), do: call(branch, {:merged, commit, :manual}, @settle_ms)
 
   @doc "Looks at the branch again: new commits, a rewrite or a deletion, and whether it merges cleanly."
-  def check_branch(branch), do: call(branch, :check_branch, @look_ms)
+  def check_branch(branch), do: call(branch, :check_branch, @look_ms, false)
 
   @doc "Marks it merged if git says it is, and notes when the merge reaches origin/main."
-  def check_merged(branch), do: call(branch, {:merged, nil, :auto}, @look_ms)
+  def check_merged(branch), do: call(branch, {:merged, nil, :auto}, @look_ms, false)
 
   @doc "Marks it merged (when approved) or closed, and tells the waiting agents. It stays, read-only."
   def close(branch), do: call(branch, :close)
 
-  defp call(branch, msg, timeout \\ 5_000) do
+  # A command for a merge request that has no process but is kept on disk (it
+  # rests, or its process stopped) starts it from its file first. The watcher's
+  # looks don't (`wake?` false): a resting one has nothing to be looked at for.
+  defp call(branch, msg, timeout \\ 5_000, wake? \\ true) do
+    with :error <- lookup(branch),
+         true <- wake?,
+         %{branch: ^branch} = stored <- Merge.Store.get(branch) do
+      DynamicSupervisor.start_child(Merge.MergeRequests, {__MODULE__, {:restore, stored}})
+    end
+
     case lookup(branch) do
       {:ok, pid} -> GenServer.call(pid, msg, timeout)
       :error -> :error
@@ -433,11 +493,7 @@ defmodule Merge.MergeRequest do
 
   @impl true
   def init({:restore, saved}) do
-    # Fields added since it was saved take their defaults.
-    saved = saved |> Map.put(:waiters, %{}) |> number_events()
-    # Sent back for work was `:needs_work` before In progress.
-    saved = if saved.status == :needs_work, do: %{saved | status: :in_progress}, else: saved
-    state = struct(__MODULE__, saved)
+    state = revived(saved)
     publish(state)
     {:ok, state}
   end
@@ -558,6 +614,19 @@ defmodule Merge.MergeRequest do
 
   def handle_call(:check_branch, from, state) do
     {:noreply, read(state, :look, {from, :ok})}
+  end
+
+  # To rest (`rest_settled/0`): the summary stays on the board and the process
+  # stops, unless someone waits on it or it is being read.
+  def handle_call(:rest, _from, state) do
+    if settled?(state) and state.waiters == %{} and Map.get(state, :job) == nil do
+      Merge.Store.put(saved(state))
+      Registry.unregister(Merge.Registry, state.branch)
+      Merge.Board.put_resting(state.branch, summary(state))
+      {:stop, {:shutdown, :rest}, :rested, state}
+    else
+      {:reply, :awake, state}
+    end
   end
 
   def handle_call(:settled, from, state) do
@@ -833,9 +902,20 @@ defmodule Merge.MergeRequest do
   end
 
   @impl true
+  # Going to rest changes nothing anyone sees.
+  def terminate({:shutdown, :rest}, _state), do: :ok
   def terminate(_reason, _state), do: broadcast_list()
 
   ## Helpers
+
+  # A stored merge request as the state of its process.
+  defp revived(saved) do
+    # Fields added since it was saved take their defaults.
+    saved = saved |> Map.put(:waiters, %{}) |> number_events()
+    # Sent back for work was `:needs_work` before In progress.
+    saved = if saved.status == :needs_work, do: %{saved | status: :in_progress}, else: saved
+    struct(__MODULE__, saved)
+  end
 
   # A new body (and its `groups` block) in place of the old; nothing else
   # changes. A blank or identical one is no change.
