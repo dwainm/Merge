@@ -82,9 +82,23 @@ defmodule MergeWeb.MergeRequestLive do
   def handle_info(:auto_merge, socket),
     do: {:noreply, assign(socket, hold: AutoMerge.hold_entry(socket.assigns.branch))}
 
+  # The diff is read again only when what it is made from moved: a comment or
+  # a new body leaves the files as they are.
   def handle_info({:merge_request, mr}, socket) do
-    {:noreply, socket |> assign(mr: mr, page_title: mr.title) |> load_files()}
+    old = socket.assigns.mr
+    socket = assign(socket, mr: mr, page_title: mr.title)
+
+    if old && diff_source(old) == diff_source(mr),
+      do: {:noreply, assign_derived(socket)},
+      else: {:noreply, load_files(socket)}
   end
+
+  # Who is waiting, alone (an agent's wait started or ended).
+  def handle_info({:waiting, names}, %{assigns: %{mr: %{} = mr}} = socket) do
+    {:noreply, assign(socket, mr: %{mr | waiting: names})}
+  end
+
+  def handle_info({:waiting, _names}, socket), do: {:noreply, socket}
 
   def handle_info({:servers, servers}, socket) do
     {:noreply, assign(socket, tree: Servers.tree_for(socket.assigns.mr, servers))}
@@ -185,6 +199,12 @@ defmodule MergeWeb.MergeRequestLive do
   defp view_commit(_socket), do: nil
 
   defp last_decision(mr), do: List.last(mr.decisions)
+
+  # What the files of any view are worked out from.
+  defp diff_source(mr) do
+    {mr.head, mr.merge_base, mr.commits, mr.files, Map.get(mr, :groups), Map.get(mr, :own_base),
+     last_decision(mr)[:head]}
+  end
 
   defp base_merges(mr), do: Enum.count(mr.commits, &MergeRequest.base_merge?/1)
 
