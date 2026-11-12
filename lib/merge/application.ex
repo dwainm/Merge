@@ -22,6 +22,10 @@ defmodule Merge.Application do
       MergeWeb.Endpoint
     ]
 
+    # The fetch and the server probes, each in a worker of its own, beside the watcher.
+    {before, rest} = Enum.split_while(children, &(&1 != Merge.Watcher))
+    children = before ++ Merge.Background.children() ++ rest
+
     # See https://elixir.hexdocs.pm/Supervisor.html
     # for other strategies and supported options
     opts = [strategy: :one_for_one, name: Merge.Supervisor]

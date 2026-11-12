@@ -139,6 +139,20 @@ defmodule Merge.RestoreMissingTest do
     assert Process.alive?(pid)
   end
 
+  test "where the rounds run by themselves, a round leaves the network to the workers" do
+    Phoenix.PubSub.subscribe(Merge.PubSub, Merge.Servers.topic())
+    Application.put_env(:merge, :watch_ms, 3_600_000)
+    on_exit(fn -> Application.delete_env(:merge, :watch_ms) end)
+
+    assert Merge.Background.on?()
+    Merge.Watcher.run()
+    # The trees and servers come from the prober, in its own process.
+    assert_receive {:servers, _}, 5_000
+    assert is_pid(Process.whereis(Merge.Prober))
+    assert is_pid(Process.whereis(Merge.Fetcher))
+    _ = :sys.get_state(Merge.Prober)
+  end
+
   test "the watcher sets its next round from any message, not only from a round" do
     pid = Process.whereis(Merge.Watcher)
     timer = fn -> pid |> Process.info(:dictionary) |> elem(1) |> Keyword.get(:round_timer) end

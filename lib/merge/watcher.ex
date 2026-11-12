@@ -1,7 +1,8 @@
 defmodule Merge.Watcher do
   @moduledoc """
-  Every minute (`config :merge, :watch_ms`; nil turns it off): fetches
-  origin in each repo the merge requests use, broadcasts the drift of main,
+  Every minute (`config :merge, :watch_ms`; nil turns it off): broadcasts
+  the drift of main (the fetch from GitHub is `Merge.Background`'s, which
+  asks for a round when it is in),
   marks merge requests merged when their branch has landed on main, and
   broadcasts the trees and their servers (`Merge.Servers`), and lets
   `Merge.AutoPush` push main when it is due, with a timer for the moment it
@@ -120,17 +121,18 @@ defmodule Merge.Watcher do
     _ -> nil
   end
 
-  @doc "One round: fetch, drift, merges, servers."
+  @doc """
+  One round: drift, the branches, merges. Nothing in it waits on the network
+  where the fetch and the server probes have workers of their own
+  (`Merge.Background`); without them (the tests) the round does both itself,
+  the fetch first and the probes last.
+  """
   def run do
     # A merge request whose process died comes back from its file first.
     MergeRequest.restore_missing()
     mrs = MergeRequest.list()
-
-    [Drift.repo() | Enum.map(mrs, &MergeRequest.git_repo/1)]
-    |> Enum.reject(&is_nil/1)
-    |> Enum.uniq()
-    |> Enum.uniq_by(&common_dir/1)
-    |> Enum.each(&Git.fetch/1)
+    background? = Merge.Background.on?()
+    if background?, do: Merge.Background.ensure(), else: fetch_repos(mrs)
 
     with %{repo: repo, main: main} <- Drift.refresh(), do: Merge.Checks.want(repo, main)
 
@@ -152,7 +154,27 @@ defmodule Merge.Watcher do
     # After the branches are looked at, so a conflict that is gone is gone here too.
     Merge.AutoMerge.run()
 
-    Merge.Servers.refresh()
+    if background?, do: Merge.Background.poke(Merge.Prober), else: Merge.Servers.refresh()
+  end
+
+  @doc """
+  The fetcher's job (`Merge.Background`): fetches origin in each repo, asks
+  GitHub what the home page says of it (main's CI runs, whether a push will
+  land: `Merge.Drift.ask_github/0`), then has the watcher do a round on what
+  came in.
+  """
+  def fetch do
+    fetch_repos(MergeRequest.list())
+    Drift.ask_github()
+    refresh()
+  end
+
+  defp fetch_repos(mrs) do
+    [Drift.repo() | Enum.map(mrs, &MergeRequest.git_repo/1)]
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+    |> Enum.uniq_by(&common_dir/1)
+    |> Enum.each(&Git.fetch/1)
   end
 
   # Worktrees of one repo share a fetch.

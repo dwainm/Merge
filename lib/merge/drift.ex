@@ -217,11 +217,44 @@ defmodule Merge.Drift do
     after_git(repo, Git.merge_into(repo, "main", "origin/main", "Merge GitHub's main into main"))
   end
 
+  @doc """
+  What only GitHub can say of `repo`: main's CI runs, and whether a push of
+  main as it is would land. Asked by the fetcher (`Merge.Background`), kept,
+  and laid on the drift by `refresh/1`, which never asks itself there.
+  """
+  def ask_github(repo \\ repo()) do
+    with %{} = d <- read(repo) do
+      :persistent_term.put(
+        {__MODULE__, :github},
+        %{repo: d.repo, main: d.main, origin: d.origin, ci: ci(repo), landing: will_land(d)}
+      )
+    end
+
+    :ok
+  end
+
+  # GitHub's answers for `d`: asked now where a round does everything itself;
+  # else what the fetcher last heard. The CI runs stand until it hears again;
+  # whether a push lands is only known for the main and origin it asked
+  # about, so when they have moved the fetcher is asked to ask again.
+  defp github(d, repo) do
+    if Merge.Background.on?() do
+      kept = :persistent_term.get({__MODULE__, :github}, nil)
+      fresh? = match?(%{main: m, origin: o} when m == d.main and o == d.origin, kept)
+      unless fresh?, do: Merge.Background.poke(Merge.Fetcher)
+
+      %{
+        ci: if(match?(%{repo: r} when r == d.repo, kept), do: kept.ci, else: []),
+        landing: if(fresh?, do: kept.landing)
+      }
+    else
+      %{ci: ci(repo), landing: will_land(d)}
+    end
+  end
+
   @doc "Reads the drift and main's CI, keeps it as current and broadcasts it."
   def refresh(repo \\ repo()) do
-    drift =
-      with %{} = d <- read(repo),
-           do: Map.merge(d, %{ci: ci(repo), landing: will_land(d)})
+    drift = with %{} = d <- read(repo), do: Map.merge(d, github(d, repo))
 
     emit_tip(current(), drift)
     if drift, do: drop_stale_push(drift.repo)
