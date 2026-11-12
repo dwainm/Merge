@@ -21,10 +21,11 @@ unit=${MERGE_UNIT:-merge}
 
 switch() {
   ln -sfn "$1" "$current.new" && mv -T "$current.new" "$current"
-  echo "merge: the service runs $(basename "$1") from now"
   if [ "$unit" != none ]; then
     systemctl --user restart "$unit"
-    echo "merge: restarted"
+    echo "merge: restarted, the service runs $(basename "$1")"
+  else
+    echo "merge: $(basename "$1") is the release a start will run; nothing was restarted"
   fi
 }
 
