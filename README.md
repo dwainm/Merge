@@ -13,6 +13,9 @@ No GitHub and no database: each merge request is a process, gone when the server
     merge serve [--port N] [--repo PATH] [--check CMD] [--check-image CMD] [--auto-push-after 5m]
         merge serve                     # prints http://localhost:<PORT> and https://merge.dev.dayofplenty.com
 
+    merge deploy [--build | --back | <commit>]
+        merge deploy                    # builds main and restarts the service on it (see "The service")
+
     merge mr open <branch> [--repo PATH] [--base BRANCH] [--title T] [--body B | --body-file F] [--groups F] [--as NAME]
         cd /root/projects/dayofplenty && merge mr open checkin --title "Coffee shop check-in"
         merge mr open checkin --body-file F   # already open: replaces the body in place, keeps the review
@@ -259,12 +262,32 @@ Use the service's port (4747), or the one `merge serve` printed.
 
 ## The service
 
-    systemctl --user enable --now /root/projects/merge/systemd/merge.service
+The service runs a built release of Merge, not the development server:
 
-It runs `merge serve --port 4747`, restarts itself, and holds the tailnet name. Any
-`merge serve` started while it runs stays on localhost and says so. After pulling
-a change that adds a library: `systemctl --user restart merge` (the dev code
-reloader picks up code changes, but not new libraries).
+    ln -sfn /root/projects/merge/systemd/merge-release.service ~/.config/systemd/user/merge.service
+    systemctl --user daemon-reload && systemctl --user enable --now merge
+
+It runs `~/.merge/release/bin/merge start` on port 4747 with its settings in the unit
+(`MERGE_REPO`, `MERGE_CHECK`, `MERGE_CHECK_IMAGE`, `MERGE_AUTO_PUSH_AFTER`, `PORT`),
+restarts itself, and holds the tailnet name. Any `merge serve` started while it runs
+stays on localhost and says so.
+
+**A change to Merge reaches the service when it is deployed**, not when it is merged:
+
+    merge deploy            # builds main, switches the service to it, restarts it
+    merge deploy --build    # builds only, and says where
+    merge deploy --back     # back to the release before this one
+    merge deploy <commit>   # another commit or branch
+
+The build takes a minute or two, in a checkout of its own (`~/.merge/build`), while the
+service carries on. The restart takes about three seconds: pages connect again, agents'
+waits ask again by themselves, and a check it cuts off runs again. Each release is kept
+whole under `~/.merge/releases/<sha>`, the last three to go back to. `merge remote` in a
+release's `bin` opens a shell in the running server, to look.
+
+`systemd/merge.service` is the development server the service ran before
+(`merge serve` from the checkout, loading code as it changed); linking it instead
+goes back to that.
 
 ## Decisions
 

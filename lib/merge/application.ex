@@ -30,9 +30,14 @@ defmodule Merge.Application do
     # for other strategies and supported options
     opts = [strategy: :one_for_one, name: Merge.Supervisor]
 
+    # The built release has no `merge serve` to tell it its settings: they
+    # come from its environment, before anything starts.
+    if Merge.Serve.release?(), do: Merge.Serve.configure(Merge.Serve.from_env())
+
     with {:ok, pid} <- Supervisor.start_link(children, opts) do
       # The merge requests from before the last stop.
       Merge.MergeRequest.restore_all()
+      if Merge.Serve.release?(), do: Enum.each(Merge.Serve.announce(), &IO.puts/1)
       {:ok, pid}
     end
   end

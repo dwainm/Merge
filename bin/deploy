@@ -1,0 +1,71 @@
+#!/bin/sh
+# Builds Merge as a release and puts the service on it: `merge deploy`.
+#
+#   merge deploy            build main, switch to it, restart the service
+#   merge deploy --build    build main only (prints where); nothing is switched
+#   merge deploy --back     switch to the release before this one, restart
+#   merge deploy <commit>   as the first, for another commit or branch
+#
+# The build is made in a checkout of its own (~/.merge/build), never in the
+# tree you work in. Each release is kept whole under ~/.merge/releases/<sha>;
+# ~/.merge/release points at the one the service runs, the last three are kept.
+# MERGE_HOME moves all of it and MERGE_UNIT=none leaves the service alone, for
+# a test server. The restart takes a few seconds: agents' waits reconnect, and
+# a check it cuts off runs again.
+set -e
+root=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+home=${MERGE_HOME:-$HOME/.merge}
+releases="$home/releases"
+current="$home/release"
+unit=${MERGE_UNIT:-merge}
+
+switch() {
+  ln -sfn "$1" "$current.new" && mv -T "$current.new" "$current"
+  echo "merge: the service runs $(basename "$1") from now"
+  if [ "$unit" != none ]; then
+    systemctl --user restart "$unit"
+    echo "merge: restarted"
+  fi
+}
+
+only=
+case "$1" in
+  --back)
+    now=$(readlink -f "$current")
+    back=$(ls -1dt "$releases"/*/ 2>/dev/null | sed 's:/$::' | grep -v -x "$now" | head -1)
+    [ -n "$back" ] || { echo "merge: there is no release before this one" >&2; exit 1; }
+    switch "$back"
+    exit 0 ;;
+  --build) only=1; what=${2:-main} ;;
+  "") what=main ;;
+  *) what=$1 ;;
+esac
+
+sha=$(git -C "$root" rev-parse --verify --quiet "$what^{commit}") ||
+  { echo "merge: $what is not a commit" >&2; exit 1; }
+short=$(git -C "$root" rev-parse --short "$sha")
+build="$home/build"
+out="$releases/$short"
+
+if [ -d "$build" ]; then
+  git -C "$build" checkout --quiet --detach --force "$sha"
+else
+  mkdir -p "$home"
+  git -C "$root" worktree add --quiet --detach "$build" "$sha"
+fi
+
+cd "$build"
+export MIX_ENV=prod
+echo "merge: building $short"
+mix deps.get --only prod >/dev/null
+mix compile >/dev/null
+mix assets.deploy >/dev/null
+rm -rf "$out"
+mix release --overwrite --quiet --path "$out"
+touch "$out"
+echo "merge: built $out"
+
+[ -n "$only" ] && exit 0
+switch "$out"
+# The last three stay, to go back to.
+ls -1dt "$releases"/*/ | sed 's:/$::' | tail -n +4 | while read -r old; do rm -rf "$old"; done
