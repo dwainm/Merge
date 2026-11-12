@@ -83,7 +83,9 @@ defmodule Merge.MergeRequest do
     waiters: %{},
     next_id: 1,
     seq: 0,
-    cursors: %{}
+    cursors: %{},
+    # The waiting names the pages were last told (not saved).
+    waiting_shown: []
   ]
 
   ## API
@@ -189,12 +191,17 @@ defmodule Merge.MergeRequest do
     end)
   end
 
-  @doc "Every merge request: the open ones oldest first, then the done ones, latest first."
+  @doc """
+  Every merge request: the open ones oldest first, then the done ones, latest
+  first. Each comes without its diff: `files` is empty and `file_count/1` says
+  how many there are, so a list of two hundred is a megabyte to hand over, not
+  fifty. `get/1` has the diff.
+  """
   def list do
     Merge.Registry
     |> Registry.select([{{:"$1", :_, :_}, [], [:"$1"]}])
     |> Enum.flat_map(fn branch ->
-      case get(branch) do
+      case call(branch, :summary) do
         {:ok, mr} -> [mr]
         :error -> []
       end
@@ -208,6 +215,9 @@ defmodule Merge.MergeRequest do
 
   @doc "The merge request for a branch; `waiting` names the agents blocked in `wait/3`."
   def get(branch), do: call(branch, :get)
+
+  @doc "How many files it changes, for one from `get/1` or from `list/0`."
+  def file_count(mr), do: Map.get(mr, :file_count) || length(mr.files)
 
   defp get!(branch) do
     {:ok, mr} = get(branch)
@@ -386,6 +396,11 @@ defmodule Merge.MergeRequest do
 
   @impl true
   def handle_call(:get, _from, state), do: {:reply, {:ok, public(state)}, state}
+
+  def handle_call(:summary, _from, state) do
+    summary = public(%{state | files: []}) |> Map.put(:file_count, length(state.files))
+    {:reply, {:ok, summary}, state}
+  end
 
   # A done merge request steps aside for a new one on the same branch: it
   # unregisters itself before it stops, so the branch is free at once.
@@ -699,6 +714,7 @@ defmodule Merge.MergeRequest do
 
   def handle_call({:wait, name, timeout}, {pid, _} = from, state) do
     name = blank_to_nil(name) || "agent"
+    before = state
     state = register(state, name)
 
     if news?(state, name) do
@@ -708,7 +724,10 @@ defmodule Merge.MergeRequest do
     else
       ref = Process.monitor(pid)
       timer = Process.send_after(self(), {:wait_timeout, ref}, timeout)
-      {:noreply, changed(%{state | waiters: Map.put(state.waiters, ref, {from, timer, name})})}
+      new_agent? = state.agents != before.agents
+      state = %{state | waiters: Map.put(state.waiters, ref, {from, timer, name})}
+      # A wait asked again every minute is no change: only a new name is.
+      {:noreply, if(new_agent?, do: changed(state), else: tell_waiting(state))}
     end
   end
 
@@ -739,7 +758,7 @@ defmodule Merge.MergeRequest do
     case Map.pop(state.waiters, ref) do
       {{_from, timer, _name}, waiters} ->
         Process.cancel_timer(timer)
-        {:noreply, changed(%{state | waiters: waiters})}
+        {:noreply, tell_waiting(%{state | waiters: waiters})}
 
       {nil, _} ->
         {:noreply, state}
@@ -1093,13 +1112,34 @@ defmodule Merge.MergeRequest do
   defp merged_detail(info), do: "#{info.short} #{info.subject}"
 
   # What is written to disk: everything but the waiting agents.
-  defp saved(state), do: state |> Map.from_struct() |> Map.delete(:waiters)
+  defp saved(state), do: state |> Map.from_struct() |> Map.drop([:waiters, :waiting_shown])
 
   defp changed(state) do
     Merge.Store.put(saved(state))
     broadcast(state)
-    state
+    Map.put(state, :waiting_shown, waiting(state))
   end
+
+  # Who is waiting changed, and nothing else: the pages hear the names alone
+  # (`{:waiting, names}`), nothing is written, and a wait that ran out and was
+  # asked again (the same names as last told) says nothing at all.
+  defp tell_waiting(state) do
+    shown = Map.get(state, :waiting_shown, [])
+
+    case waiting(state) do
+      # Read with Map.get: a process from before the field has none.
+      names when names == shown ->
+        state
+
+      names ->
+        Phoenix.PubSub.broadcast(Merge.PubSub, topic(state.branch), {:waiting, names})
+        broadcast_list()
+        Map.put(state, :waiting_shown, names)
+    end
+  end
+
+  defp waiting(state),
+    do: state.waiters |> Map.values() |> Enum.map(&elem(&1, 2)) |> Enum.uniq() |> Enum.sort()
 
   defp broadcast(state) do
     Phoenix.PubSub.broadcast(
@@ -1117,8 +1157,10 @@ defmodule Merge.MergeRequest do
 
   # `waiting` names the agents blocked in `wait/3` right now.
   defp public(state) do
-    waiting = state.waiters |> Map.values() |> Enum.map(&elem(&1, 2)) |> Enum.uniq()
-    state |> Map.from_struct() |> Map.delete(:waiters) |> Map.put(:waiting, waiting)
+    state
+    |> Map.from_struct()
+    |> Map.drop([:waiters, :waiting_shown])
+    |> Map.put(:waiting, waiting(state))
   end
 
   # The groups an open brings: `attrs.groups`, else a `groups` block in the body.

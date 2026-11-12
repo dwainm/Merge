@@ -129,7 +129,7 @@ defmodule MergeWeb.ApiController do
       conflicts: conflicts(mr[:merge_check]),
       branch_state: branch_state(mr[:branch_state]),
       commits: length(MergeRequest.own_commits(mr)),
-      files: length(mr.files),
+      files: MergeRequest.file_count(mr),
       comments: length(mr.comments),
       url: MergeWeb.mr_url(mr.branch),
       local_url: MergeWeb.mr_url(mr.branch, :local)

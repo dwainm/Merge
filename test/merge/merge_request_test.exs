@@ -24,6 +24,28 @@ defmodule Merge.MergeRequestTest do
     assert mr.agents == ["agent-a"]
   end
 
+  test "the list comes without the diff, with the count of its files", c do
+    assert [listed] = Enum.filter(MergeRequest.list(), &(&1.branch == c.branch))
+    assert listed.files == []
+    assert MergeRequest.file_count(listed) == 1
+    assert MergeRequest.file_count(c.mr) == 1
+  end
+
+  test "a wait that runs out and is asked again tells the pages nothing", c do
+    Phoenix.PubSub.subscribe(Merge.PubSub, MergeRequest.topic(c.branch))
+    Phoenix.PubSub.subscribe(Merge.PubSub, MergeRequest.list_topic())
+
+    # The first wait says who is waiting, by name alone.
+    assert {:ok, :timeout} = MergeRequest.wait(c.branch, "agent-a", 20)
+    assert_receive {:waiting, ["agent-a"]}
+    assert_receive :merge_requests_changed
+
+    assert {:ok, :timeout} = MergeRequest.wait(c.branch, "agent-a", 20)
+    refute_receive {:waiting, _}, 50
+    refute_received :merge_requests_changed
+    refute_received {:merge_request, _}
+  end
+
   test "opening again registers the second agent on the same merge request", c do
     assert {:ok, mr, :existing} =
              MergeRequest.open(%{branch: c.branch, repo: c.repo, opened_by: "agent-b"})
