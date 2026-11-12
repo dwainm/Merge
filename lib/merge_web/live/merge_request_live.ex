@@ -8,12 +8,15 @@ defmodule MergeWeb.MergeRequestLive do
 
   use MergeWeb, :live_view
 
-  alias Merge.{AutoMerge, Checks, Drift, Git, Groups, MergeRequest, Servers}
+  alias Merge.{AutoMerge, Checks, Drift, Git, Groups, MergeRequest, Queue, Servers}
   import MergeWeb.MergeRequestComponents
 
   # The queue's tabs. A tab dropping out never moves this page.
   on_mount MergeWeb.QueueHook
   on_mount MergeWeb.ServerSheetHook
+
+  # How long "Approved" shows before the page moves on to the queue's next one.
+  @moving_on_ms 1_500
 
   @impl true
   def mount(%{"branch" => parts}, _session, socket) do
@@ -37,7 +40,7 @@ defmodule MergeWeb.MergeRequestLive do
      |> assign(branch: branch, mr: mr, picked: nil, page_title: (mr && mr.title) || branch)
      |> assign(tree: mr && Servers.tree_for(mr, Servers.read()))
      |> assign(line_form: blank_form(:line), review_form: blank_form(:review))
-     |> assign(dialog: nil, dialog_error: nil)
+     |> assign(dialog: nil, dialog_error: nil, moving_to: nil)
      |> assign(hold: AutoMerge.hold_entry(branch))}
   end
 
@@ -69,6 +72,23 @@ defmodule MergeWeb.MergeRequestLive do
 
   def handle_info({:merge_request, mr}, socket) do
     {:noreply, socket |> assign(mr: mr, page_title: mr.title) |> load_files()}
+  end
+
+  # Approved with others waiting: on to the queue's Next as it is now (the one
+  # named may have been decided meanwhile); with none left, the page stays.
+  def handle_info(:move_on, socket) do
+    socket = assign(socket, moving_to: nil)
+
+    case Queue.next_after(socket.assigns.queue, socket.assigns.branch) do
+      nil ->
+        {:noreply, put_flash(socket, :info, "Approved.")}
+
+      next ->
+        {:noreply,
+         socket
+         |> put_flash(:info, "Approved #{socket.assigns.mr.title}.")
+         |> push_navigate(to: MergeWeb.mr_path(next.branch))}
+    end
   end
 
   def handle_info({:servers, servers}, socket) do
@@ -116,9 +136,13 @@ defmodule MergeWeb.MergeRequestLive do
     |> reviewed(socket, review, "Commented.")
   end
 
+  # With others waiting in the queue, the page says it's approved, then moves
+  # on to the next one (:move_on); with none, it stays, as it always has.
   def handle_event("approve", _params, socket) do
+    next = Queue.next_after(socket.assigns.queue, socket.assigns.branch)
+
     MergeRequest.decide(socket.assigns.branch, :approved)
-    |> reviewed(socket, socket.assigns.review_form.params, "Approved.")
+    |> reviewed(assign(socket, moving_to: next), socket.assigns.review_form.params, "Approved.")
   end
 
   def handle_event("reject", %{"review" => %{"body" => body} = review}, socket) do
@@ -137,16 +161,28 @@ defmodule MergeWeb.MergeRequestLive do
         do: to_form(review, as: :review),
         else: blank_form(:review)
 
-    {:noreply,
-     socket
-     |> assign(mr: mr, review_form: review_form, dialog: nil, dialog_error: nil)
-     |> load_files()
-     |> push_event("review-sent", %{to: sent_to(added)})
-     |> put_flash(:info, flash)}
+    socket =
+      socket
+      |> assign(mr: mr, review_form: review_form, dialog: nil, dialog_error: nil)
+      |> load_files()
+
+    # Approved with another waiting: #moving-on says so, then :move_on.
+    if socket.assigns.moving_to do
+      Process.send_after(self(), :move_on, @moving_on_ms)
+      {:noreply, socket}
+    else
+      {:noreply,
+       socket |> push_event("review-sent", %{to: sent_to(added)}) |> put_flash(:info, flash)}
+    end
   end
 
   defp reviewed({:error, message}, socket, review, _flash) do
-    {:noreply, assign(socket, review_form: to_form(review, as: :review), dialog_error: message)}
+    {:noreply,
+     assign(socket,
+       review_form: to_form(review, as: :review),
+       dialog_error: message,
+       moving_to: nil
+     )}
   end
 
   defp reviewed(:error, socket, _review, _flash), do: {:noreply, gone(socket)}
@@ -314,6 +350,9 @@ defmodule MergeWeb.MergeRequestLive do
   end
 
   def render(assigns) do
+    # The queue's next one after this, if any: Approve moves on to it.
+    assigns = assign(assigns, :next, Queue.next_after(assigns.queue, assigns.branch))
+
     ~H"""
     <Layouts.app flash={@flash} queue={@queue} current={@branch}>
       <header id="mr-header" class="mb-4">
@@ -804,9 +843,10 @@ defmodule MergeWeb.MergeRequestLive do
            clear by the bar's height, so the last file can scroll above it.
            Three plain actions, each with its own dialog, so a note typed for
            one can't go with another. Once approved only Comment is left: the
-           verdict is on the page. Merged or closed, the bar goes. --%>
+           verdict is on the page. Merged or closed, the bar goes. With others
+           waiting in the queue, Approve moves on to the next one. --%>
       <div
-        :if={not MergeRequest.done?(@mr)}
+        :if={not MergeRequest.done?(@mr) and is_nil(@moving_to)}
         id="review-bar"
         phx-hook=".BottomSpace"
         class="fixed inset-x-0 bottom-0 z-40 border-t border-(--border) bg-(--surface)/95 pb-[env(safe-area-inset-bottom)] backdrop-blur"
@@ -838,9 +878,9 @@ defmodule MergeWeb.MergeRequestLive do
             type="button"
             phx-click="open_dialog"
             phx-value-dialog="approve"
-            class="flex-1 rounded-md bg-(--ok-solid) px-4 py-2.5 text-sm font-medium text-white transition hover:opacity-90 active:scale-[0.98] sm:flex-none sm:py-2"
+            class="flex-1 rounded-md bg-(--ok-solid) px-4 py-2.5 text-sm font-medium whitespace-nowrap text-white transition hover:opacity-90 active:scale-[0.98] sm:flex-none sm:py-2"
           >
-            Approve
+            {if @next, do: "Approve, then next", else: "Approve"}
           </button>
           <button
             :if={@mr.status != :approved}
@@ -878,9 +918,35 @@ defmodule MergeWeb.MergeRequestLive do
         </.form>
       </.review_dialog>
 
+      <%!-- Approved, with another waiting: it says so where the bar was, then
+           the page moves on (:move_on). --%>
+      <div
+        :if={@moving_to}
+        id="moving-on"
+        role="status"
+        class="moving-on fixed inset-x-0 bottom-0 z-40 border-t border-(--ok-border) bg-(--ok-bg) pb-[env(safe-area-inset-bottom)]"
+      >
+        <div class="mx-auto flex max-w-7xl items-center gap-3 px-4 py-3 text-sm lg:px-6">
+          <span class="flex size-6 shrink-0 items-center justify-center rounded-full bg-(--ok-solid) text-white">
+            <.icon name="hero-check-micro" class="size-4" />
+          </span>
+          <span class="min-w-0 flex-1">
+            <span class="font-medium text-(--ok-text)">Approved.</span>
+            <span class="text-(--text-muted)">
+              On to <span class="font-medium text-(--text)">{@moving_to.title}</span>…
+            </span>
+          </span>
+        </div>
+        <div class="moving-on-progress h-0.5 bg-(--ok-solid)"></div>
+      </div>
+
       <.review_dialog :if={@dialog == :approve} id="approve-dialog" title={"Approve #{@mr.title}?"}>
         <p class="text-sm text-(--text-muted)">
           The author is told it is approved. An approval carries no note; a comment goes with Comment.
+        </p>
+        <p :if={@next} id="approve-next" class="mt-2 text-sm text-(--text-muted)">
+          Then on to the next in your queue:
+          <span class="font-medium text-(--text)">{@next.title}</span>
         </p>
         <div class="mt-4 flex gap-2 sm:justify-end">
           <button
@@ -898,7 +964,7 @@ defmodule MergeWeb.MergeRequestLive do
             phx-disable-with="Approving…"
             class="flex-1 rounded-md bg-(--ok-solid) px-4 py-2.5 text-sm font-medium text-white transition hover:opacity-90 active:scale-[0.98] sm:flex-none sm:py-2"
           >
-            Approve
+            {if @next, do: "Approve, then next", else: "Approve"}
           </button>
         </div>
       </.review_dialog>
@@ -954,12 +1020,15 @@ defmodule MergeWeb.MergeRequestLive do
           mounted() {
             this.observer = new ResizeObserver(() => {
               document.body.style.paddingBottom = `${this.el.offsetHeight + 16}px`
+              // The dialogs sit just above the bar (.review-dialog in app.css).
+              document.documentElement.style.setProperty("--review-bar-h", `${this.el.offsetHeight}px`)
             })
             this.observer.observe(this.el)
           },
           destroyed() {
             this.observer.disconnect()
             document.body.style.paddingBottom = ""
+            document.documentElement.style.removeProperty("--review-bar-h")
           }
         }
       </script>
@@ -974,8 +1043,8 @@ defmodule MergeWeb.MergeRequestLive do
     """
   end
 
-  # A dialog over the page: a sheet from the bottom on a phone, centred on a
-  # wider screen. Escape, ✕ or a tap beside it closes it without sending.
+  # A dialog over the page: a sheet from the bottom on a phone; on a wider
+  # screen a card just above the review bar, at its right, by the buttons. Escape, ✕ or a tap beside it closes it without sending.
   attr :id, :string, required: true
   attr :title, :string, required: true
   slot :inner_block, required: true
@@ -987,7 +1056,7 @@ defmodule MergeWeb.MergeRequestLive do
       phx-hook=".ReviewDialog"
       phx-mounted={JS.ignore_attributes("open")}
       aria-labelledby={@id <> "-title"}
-      class="review-dialog m-0 mt-auto w-full max-w-none rounded-t-2xl bg-(--surface) p-0 text-(--text) shadow-2xl sm:m-auto sm:max-w-lg sm:rounded-xl"
+      class="review-dialog m-0 mt-auto w-full max-w-none rounded-t-2xl bg-(--surface) p-0 text-(--text) shadow-2xl sm:max-w-lg sm:rounded-xl"
     >
       <div class="px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] sm:p-5">
         <div class="mb-3 flex items-start gap-3">

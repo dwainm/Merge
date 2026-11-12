@@ -63,11 +63,19 @@ defmodule Merge.Queue do
       end
       |> Enum.filter(&(&1.leaving_at == nil or DateTime.compare(&1.leaving_at, now) == :gt))
 
-    case Enum.find_index(tabs, &(&1.leaving_at == nil and &1.status != :in_progress)) do
+    case Enum.find_index(tabs, &waiting?/1) do
       nil -> tabs
       i -> List.update_at(tabs, i, &%{&1 | next: true})
     end
   end
+
+  @doc """
+  The tab that is Next once `branch` is decided: the first of `tabs` (as
+  `tabs/1` gave them) other than `branch` that Needs review, or nil.
+  """
+  def next_after(tabs, branch), do: Enum.find(tabs, &(&1.branch != branch and waiting?(&1)))
+
+  defp waiting?(tab), do: tab.leaving_at == nil and tab.status != :in_progress
 
   # Approved, merged or closed: it goes a little after that happened.
   defp leaving_at(%{status: status} = mr) when status in [:approved, :merged, :closed] do

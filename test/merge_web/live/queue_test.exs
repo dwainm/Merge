@@ -47,10 +47,9 @@ defmodule MergeWeb.QueueTest do
        %{conn: conn, branches: [one, two]} do
     Queue.add(one)
     Queue.add(two)
-    {:ok, view, _html} = live(conn, MergeWeb.mr_path(one))
+    {:ok, view, _html} = live(conn, MergeWeb.mr_path(two))
 
-    view |> element("#approve-button") |> render_click()
-    view |> element("#approve-confirm") |> render_click()
+    {:ok, _} = MergeRequest.decide(one, :approved)
 
     assert has_element?(view, "#queue-tab-#{one}.queue-leaving", "Approved")
     assert has_element?(view, "#queue-tab-#{two}", "Next")
@@ -60,6 +59,63 @@ defmodule MergeWeb.QueueTest do
 
     send(view.pid, :queue_tick)
     assert has_element?(view, "#mr-header")
+  end
+
+  test "with another waiting, Approve says so, shows it took, then moves on to the queue's Next",
+       %{conn: conn, branches: [one, two]} do
+    Queue.add(one)
+    Queue.add(two)
+    {:ok, view, _html} = live(conn, MergeWeb.mr_path(one))
+
+    assert has_element?(view, "#approve-button", "Approve, then next")
+    view |> element("#approve-button") |> render_click()
+    assert has_element?(view, "#approve-next", "Change 2")
+    assert has_element?(view, "#approve-confirm", "Approve, then next")
+
+    view |> element("#approve-confirm") |> render_click()
+
+    # What an approval is doesn't change; the page says so before it goes.
+    assert {:ok, %{status: status, decisions: [%{verdict: :approved, body: ""}]}} =
+             MergeRequest.get(one)
+
+    assert status in [:approved, :merged]
+    assert has_element?(view, "#moving-on", "Change 2")
+    refute has_element?(view, "#review-bar")
+
+    send(view.pid, :move_on)
+    path = MergeWeb.mr_path(two)
+    assert {^path, %{"info" => "Approved Change 1."}} = assert_redirect(view)
+  end
+
+  test "Next is the queue's own: approving a later tab goes back to the first still waiting",
+       %{conn: conn, branches: [one, two]} do
+    Queue.add(one)
+    Queue.add(two)
+    {:ok, view, _html} = live(conn, MergeWeb.mr_path(two))
+
+    view |> element("#approve-button") |> render_click()
+    view |> element("#approve-confirm") |> render_click()
+    send(view.pid, :move_on)
+
+    path = MergeWeb.mr_path(one)
+    assert {^path, _flash} = assert_redirect(view)
+  end
+
+  test "with nothing else waiting, Approve is just Approve and the page stays",
+       %{conn: conn, branches: [one, two]} do
+    Queue.add(one)
+    Queue.add(two)
+    {:ok, _} = MergeRequest.decide(two, :needs_work, "Not yet.")
+    {:ok, view, _html} = live(conn, MergeWeb.mr_path(one))
+
+    assert has_element?(view, "#approve-button", "Approve")
+    refute has_element?(view, "#approve-button", "then next")
+    view |> element("#approve-button") |> render_click()
+    refute has_element?(view, "#approve-next")
+    view |> element("#approve-confirm") |> render_click()
+
+    refute has_element?(view, "#moving-on")
+    assert has_element?(view, "#decision-0", "Approved")
   end
 
   test "a merge request page can be queued from its header", %{conn: conn, branches: [one, _]} do
