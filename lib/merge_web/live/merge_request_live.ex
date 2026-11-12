@@ -1079,7 +1079,8 @@ defmodule MergeWeb.MergeRequestLive do
   end
 
   # A dialog over the page: a sheet from the bottom on a phone; on a wider
-  # screen a card just above the review bar, at its right, by the buttons. Escape, ✕ or a tap beside it closes it without sending.
+  # screen a card just above the review bar, at its right, by the buttons.
+  # Escape, ✕ or a tap beside it closes it without sending.
   attr :id, :string, required: true
   attr :title, :string, required: true
   slot :inner_block, required: true
