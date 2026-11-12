@@ -291,8 +291,18 @@ reloader picks up code changes, but not new libraries).
 - **The base is `origin/main` when the repo has it, else `main`**; `--base` reviews a stacked
   branch against its parent.
 - **Diffs** are `git diff base...branch`, cached in the merge request's process and recomputed on
-  `addressed`. A commit's diff is against its first parent. "Since your review" is the diff from
-  the head that was reviewed to the current head; commits after it are marked new.
+  `addressed`. A commit's diff is against its first parent.
+- **An `origin/main` base is judged against local main** when local main contains origin/main and the branch isn't on main yet: local main is what a branch lands on, so the files, +/− and commit counts are the branch's own.
+- **"Since your review" is only what the author changed** since the reviewed head: the branch's
+  own diff then, laid on the merge base it has now (`git merge-tree --merge-base`), against the
+  head now. A file only main changed drops out, however much it changed; a conflict the author
+  resolved by hand shows as its resolution (against git's merge with conflict markers). When main
+  moved and was merged in, one quiet line says so: "main has moved since your review; the branch
+  has it merged in".
+- **A merge of the base into the branch is folded** in the commit list: "Merged main in, 14 files
+  from main", with "N resolved" when the author resolved conflicts. Its own view is git's remerge
+  diff, only what the author did in that merge, or "Nothing of the author's: main merged
+  cleanly". It isn't marked new and isn't counted as a commit, nor in the `new-commits` event.
 - **Line comments** are tied to the view they were written on (the whole branch, or one commit).
 - **Groups are Merge's opinion, not configuration.** `Merge.Stack` knows Phoenix and Expo and
   reads a module's `use` line at the tip to place it; the author's `groups` text overrides it

@@ -69,6 +69,7 @@ defmodule Merge.MergeRequest do
     :merge_check,
     :groups,
     :body_updated_at,
+    :own_base,
     conflicts: [],
     branch_state: :ok,
     status: :open,
@@ -106,6 +107,19 @@ defmodule Merge.MergeRequest do
 
   @doc "True once a merge request is merged or closed."
   def done?(%{status: status}), do: status in [:merged, :closed]
+
+  @doc """
+  The line the branch's own commits and diff are taken against: its base, or
+  local main for an `origin/main` base (`Merge.Git.own_base/3`), as it was at
+  the last look at the branch.
+  """
+  def own_base(mr), do: Map.get(mr, :own_base) || mr.base
+
+  @doc "True for a commit that merged the base into the branch (`merge_of` is set)."
+  def base_merge?(commit), do: Map.get(commit, :merge_of) != nil
+
+  @doc "The branch's commits without the merges of the base into it."
+  def own_commits(mr), do: Enum.reject(mr.commits, &base_merge?/1)
 
   @doc """
   Opens a merge request for `attrs.branch` in `attrs.repo`, or, when one is
@@ -359,7 +373,7 @@ defmodule Merge.MergeRequest do
       Events.emit(
         "opened",
         branch,
-        "#{state.title} (#{length(state.commits)} commits) by #{opened_by}"
+        "#{state.title} (#{length(own_commits(state))} commits) by #{opened_by}"
       )
 
       emit_changes(%{state | merge_check: nil}, state)
@@ -900,31 +914,64 @@ defmodule Merge.MergeRequest do
     })
   end
 
-  # Recomputes the commits and the diff of the branch from git.
+  # Recomputes the commits and the diff of the branch from git, against the
+  # line it merges into (`Git.own_base/3`), so all of it is the branch's own.
   defp refresh(state) do
     repo = git_repo(state)
     {:ok, head} = Git.rev_parse(repo, state.branch)
+    own = Git.own_base(repo, state.base, state.branch)
 
     merge_base =
-      case Git.merge_base(repo, state.base, state.branch) do
+      case Git.merge_base(repo, own, state.branch) do
         {:ok, sha} -> sha
         {:error, _} -> nil
       end
 
     commits =
-      case Git.commits(repo, state.base, state.branch) do
-        {:ok, commits} -> commits
+      case Git.commits(repo, own, state.branch) do
+        {:ok, commits} -> Enum.map(commits, &mark_base_merge(repo, own, &1))
         {:error, _} -> []
       end
 
     files =
-      case Git.branch_diff(repo, state.base, state.branch) do
+      case Git.branch_diff(repo, own, state.branch) do
         {:ok, files} -> files
         {:error, _} -> []
       end
 
     %{state | head: head, merge_base: merge_base, commits: commits, files: files}
+    |> Map.put(:own_base, own)
   end
+
+  # A merge whose second parent is on the base is a merge of the base into the
+  # branch: it says which (`merge_of`, "main"), how many files the base brought
+  # (`from_base`) and how many the author changed in it (`own_files`, the
+  # conflicts resolved by hand, from `Git.remerge_diff/2`).
+  defp mark_base_merge(repo, own, %{parents: [ours, theirs | _]} = commit) do
+    if Git.ancestor?(repo, theirs, own) do
+      from_base =
+        case Git.paths_between(repo, ours, commit.sha) do
+          {:ok, paths} -> length(paths)
+          _ -> 0
+        end
+
+      own_files =
+        case Git.remerge_diff(repo, commit.sha) do
+          {:ok, files} -> length(files)
+          _ -> 0
+        end
+
+      Map.merge(commit, %{
+        merge_of: String.replace_prefix(own, "origin/", ""),
+        from_base: from_base,
+        own_files: own_files
+      })
+    else
+      commit
+    end
+  end
+
+  defp mark_base_merge(_repo, _own, commit), do: commit
 
   # A trial merge of the branch into main (local main, where merges happen),
   # done again only when the branch head or main's tip has moved.
@@ -1003,15 +1050,18 @@ defmodule Merge.MergeRequest do
 
       new.head != old.head ->
         seen = MapSet.new(old.commits, & &1.sha)
-        fresh = Enum.reject(new.commits, &MapSet.member?(seen, &1.sha))
+        fresh = Enum.reject(own_commits(new), &MapSet.member?(seen, &1.sha))
         latest = List.first(new.commits)
         subject = if latest, do: " #{latest.subject}", else: ""
 
-        Events.emit(
-          "new-commits",
-          branch,
-          "#{length(fresh)} → #{Events.short(new.head)}#{subject}"
-        )
+        # Only merges of the base: nothing of the author's to count.
+        detail =
+          case {fresh, Enum.find(new.commits, &(base_merge?(&1) and &1.sha not in seen))} do
+            {[], %{merge_of: base}} -> "#{base} merged in → #{Events.short(new.head)}"
+            _ -> "#{length(fresh)} → #{Events.short(new.head)}#{subject}"
+          end
+
+        Events.emit("new-commits", branch, detail)
 
       true ->
         :ok
