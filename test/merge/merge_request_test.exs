@@ -32,17 +32,15 @@ defmodule Merge.MergeRequestTest do
   end
 
   test "a wait that runs out and is asked again tells the pages nothing", c do
+    # Its own topic only: the list's is shared with every other test's merge request.
     Phoenix.PubSub.subscribe(Merge.PubSub, MergeRequest.topic(c.branch))
-    Phoenix.PubSub.subscribe(Merge.PubSub, MergeRequest.list_topic())
 
     # The first wait says who is waiting, by name alone.
     assert {:ok, :timeout} = MergeRequest.wait(c.branch, "agent-a", 20)
     assert_receive {:waiting, ["agent-a"]}
-    assert_receive :merge_requests_changed
 
     assert {:ok, :timeout} = MergeRequest.wait(c.branch, "agent-a", 20)
     refute_receive {:waiting, _}, 50
-    refute_received :merge_requests_changed
     refute_received {:merge_request, _}
   end
 

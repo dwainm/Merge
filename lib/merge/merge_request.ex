@@ -191,12 +191,20 @@ defmodule Merge.MergeRequest do
   @doc """
   Starts the stored merge requests that aren't running: one whose process
   died (a code reload can stop them all at once) comes back from its file.
+  Until then it is still read as it was (`Merge.Board`).
   Reads only the files of the missing ones. Returns how many it started.
   """
   def restore_missing do
     running = MapSet.new(Registry.select(Merge.Registry, [{{:"$1", :_, :_}, [], [:"$1"]}]))
+    stored = Merge.Store.branches()
 
-    Merge.Store.branches()
+    # One still on the board with no process and no file can't come back.
+    for {branch, _} <- Merge.Board.summaries(),
+        not MapSet.member?(running, branch),
+        branch not in stored,
+        do: Merge.Board.delete(branch)
+
+    stored
     |> Enum.reject(&MapSet.member?(running, &1))
     |> Enum.count(fn branch ->
       with %{branch: ^branch} = state <- Merge.Store.get(branch),
@@ -216,14 +224,22 @@ defmodule Merge.MergeRequest do
   fifty. `get/1` has the diff.
   """
   def list do
-    Merge.Registry
-    |> Registry.select([{{:"$1", :_, :_}, [], [:"$1"]}])
-    |> Enum.flat_map(fn branch ->
-      case call(branch, :summary) do
-        {:ok, mr} -> [mr]
-        :error -> []
-      end
-    end)
+    listed = Merge.Board.summaries()
+
+    # One whose process hasn't published yet (it started before the board
+    # did) is asked once; its answer puts it on the board.
+    asked =
+      Merge.Registry
+      |> Registry.select([{{:"$1", :_, :_}, [], [:"$1"]}])
+      |> Enum.reject(&is_map_key(listed, &1))
+      |> Enum.flat_map(fn branch ->
+        case call(branch, :summary) do
+          {:ok, mr} -> [mr]
+          :error -> []
+        end
+      end)
+
+    (Map.values(listed) ++ asked)
     |> Enum.split_with(&(not done?(&1)))
     |> then(fn {open, done} ->
       Enum.sort_by(open, & &1.opened_at, DateTime) ++
@@ -231,8 +247,17 @@ defmodule Merge.MergeRequest do
     end)
   end
 
-  @doc "The merge request for a branch; `waiting` names the agents blocked in `wait/3`."
-  def get(branch), do: call(branch, :get)
+  @doc """
+  The merge request for a branch, as its process last published it
+  (`Merge.Board`): read without asking the process, so it answers at once
+  whatever the process is doing. `waiting` names the agents blocked in `wait/3`.
+  """
+  def get(branch) do
+    case Merge.Board.get(branch) do
+      nil -> call(branch, :get)
+      mr -> {:ok, mr}
+    end
+  end
 
   @doc "How many files it changes, for one from `get/1` or from `list/0`."
   def file_count(mr), do: Map.get(mr, :file_count) || length(mr.files)
@@ -367,7 +392,9 @@ defmodule Merge.MergeRequest do
     saved = saved |> Map.put(:waiters, %{}) |> number_events()
     # Sent back for work was `:needs_work` before In progress.
     saved = if saved.status == :needs_work, do: %{saved | status: :in_progress}, else: saved
-    {:ok, struct(__MODULE__, saved)}
+    state = struct(__MODULE__, saved)
+    publish(state)
+    {:ok, state}
   end
 
   def init(attrs) do
@@ -397,6 +424,7 @@ defmodule Merge.MergeRequest do
         |> merge_check()
 
       Merge.Store.put(saved(state))
+      publish(state)
 
       Events.emit(
         "opened",
@@ -413,11 +441,15 @@ defmodule Merge.MergeRequest do
   end
 
   @impl true
-  def handle_call(:get, _from, state), do: {:reply, {:ok, public(state)}, state}
+  # Asked only while it isn't on the board yet; the answer puts it there.
+  def handle_call(:get, _from, state) do
+    publish(state)
+    {:reply, {:ok, public(state)}, state}
+  end
 
   def handle_call(:summary, _from, state) do
-    summary = public(%{state | files: []}) |> Map.put(:file_count, length(state.files))
-    {:reply, {:ok, summary}, state}
+    publish(state)
+    {:reply, {:ok, summary(state)}, state}
   end
 
   # A done merge request steps aside for a new one on the same branch: it
@@ -425,6 +457,7 @@ defmodule Merge.MergeRequest do
   def handle_call({:register, _name, _groups, _body}, _from, %{status: status} = state)
       when status in [:merged, :closed] do
     Registry.unregister(Merge.Registry, state.branch)
+    Merge.Board.delete(state.branch)
     {:stop, :normal, :done, state}
   end
 
@@ -448,6 +481,7 @@ defmodule Merge.MergeRequest do
 
       {:unchanged, state} ->
         Merge.Store.put(saved(state))
+        publish(state)
         {:reply, :ok, state}
     end
   end
@@ -738,6 +772,7 @@ defmodule Merge.MergeRequest do
     if news?(state, name) do
       {outcome, state} = tell(state, name)
       Merge.Store.put(saved(state))
+      publish(state)
       {:reply, {:ok, outcome}, state}
     else
       ref = Process.monitor(pid)
@@ -1132,8 +1167,15 @@ defmodule Merge.MergeRequest do
   # What is written to disk: everything but the waiting agents.
   defp saved(state), do: state |> Map.from_struct() |> Map.drop([:waiters, :waiting_shown])
 
+  # On the board before anyone is told, so whoever hears reads the new state.
+  defp publish(state), do: Merge.Board.put(state.branch, public(state), summary(state))
+
+  defp summary(state),
+    do: public(%{state | files: []}) |> Map.put(:file_count, length(state.files))
+
   defp changed(state) do
     Merge.Store.put(saved(state))
+    publish(state)
     broadcast(state)
     Map.put(state, :waiting_shown, waiting(state))
   end
@@ -1150,6 +1192,7 @@ defmodule Merge.MergeRequest do
         state
 
       names ->
+        publish(state)
         Phoenix.PubSub.broadcast(Merge.PubSub, topic(state.branch), {:waiting, names})
         broadcast_list()
         Map.put(state, :waiting_shown, names)

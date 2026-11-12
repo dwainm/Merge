@@ -11,6 +11,8 @@ defmodule Merge.Application do
       MergeWeb.Telemetry,
       {Phoenix.PubSub, name: Merge.PubSub},
       {Registry, keys: :unique, name: Merge.Registry},
+      # What pages read; before the merge requests, which write it.
+      Merge.Board,
       {DynamicSupervisor, name: Merge.MergeRequests, strategy: :one_for_one},
       Merge.Checks,
       Merge.DevScript,

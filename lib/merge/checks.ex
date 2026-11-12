@@ -24,7 +24,7 @@ defmodule Merge.Checks do
 
   @keep 30
   @tail_lines 80
-  @timeout_ms 30 * 60_000
+  @timeout_ms 45 * 60_000
 
   def topic, do: "checks"
 
@@ -160,7 +160,7 @@ defmodule Merge.Checks do
 
   def handle_info({:timeout, kind, sha}, %{running: %{kind: kind, sha: sha, port: port}} = state) do
     Port.close(port)
-    state = update_in(state.running.log, &["\n[merge] Stopped after 30 minutes.\n" | &1])
+    state = update_in(state.running.log, &["\n[merge] Stopped after 45 minutes.\n" | &1])
     {:noreply, finish(state, false)}
   end
 
