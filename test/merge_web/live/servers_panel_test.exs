@@ -29,7 +29,7 @@ defmodule MergeWeb.ServersPanelTest do
 
   defp listening(map), do: Application.put_env(:merge, :listeners, map)
 
-  # The home page asks the watcher for a round on mount; let it land first.
+  # A page asks the watcher for a round on mount; let it land first.
   defp settled(view) do
     _ = :sys.get_state(Merge.Watcher)
     _ = render(view)
@@ -51,6 +51,8 @@ defmodule MergeWeb.ServersPanelTest do
 
   test "the merge request page says which tree the branch is in, and its server", c do
     {:ok, view, _html} = live(c.conn, ~p"/mr/#{c.branch}")
+    # Opened since the watcher last read the trees: the page asks it to read again.
+    view = settled(view)
     assert has_element?(view, "#mr-tree", c.name)
     assert has_element?(view, "#mr-tree a[href='https://#{c.host}/']", c.host)
 

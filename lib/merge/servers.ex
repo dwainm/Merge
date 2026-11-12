@@ -34,6 +34,8 @@ defmodule Merge.Servers do
   """
   def read(repos \\ repos(), listeners \\ listeners(), req \\ []) do
     repos
+    # Two hundred merge requests share a handful of trees: git is asked once each.
+    |> Enum.uniq()
     |> Enum.map(&Git.common_dir/1)
     |> Enum.reject(&is_nil/1)
     |> Enum.map(&real_path/1)

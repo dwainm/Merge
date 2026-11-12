@@ -705,7 +705,7 @@ defmodule MergeWeb.HomeLive do
           <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-(--text-muted)">
             <span class="font-mono">{mr.branch} → {mr.base}</span>
             <span>{count(MergeRequest.own_commits(mr), "commit")}</span>
-            <span>{count(mr.files, "file")}</span>
+            <span>{count(MergeRequest.file_count(mr), "file")}</span>
             <span :if={mr.comments != []}>{count(mr.comments, "comment")}</span>
             <span>by {mr.opened_by}</span>
             <span :if={mr.merged} class="font-mono">in {mr.merged.short}</span>
