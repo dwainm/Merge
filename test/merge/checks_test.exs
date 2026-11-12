@@ -22,6 +22,24 @@ defmodule Merge.ChecksTest do
     name
   end
 
+  # Asked, and taken in: the answer is read from the board, not from the process,
+  # so a read right behind the request waits for it to land.
+  defp want(repo, sha, server) do
+    Checks.want(repo, sha, server)
+    _ = :sys.get_state(server)
+    :ok
+  end
+
+  # The topic is one for every test's checks: wait for this server's run to be gone.
+  defp cut_off(server, sha) do
+    assert_receive {:checks, ^sha}, 5_000
+
+    case Checks.status(sha, server) do
+      {:running, _} -> cut_off(server, sha)
+      status -> status
+    end
+  end
+
   defp finished(server, sha) do
     assert_receive {:checks, ^sha}, 5_000
 
@@ -31,9 +49,70 @@ defmodule Merge.ChecksTest do
     end
   end
 
+  test "the state is read while the checks' process is busy", c do
+    server = checks(c, "echo checked")
+    want(c.repo, c.sha, server)
+    assert %{ok: true} = finished(server, c.sha)
+
+    :ok = :sys.suspend(server)
+    assert Checks.enabled?(server)
+    assert %{ok: true} = Checks.status(c.sha, server)
+    assert Checks.image_status(c.sha, server) == :off
+    assert Checks.status(String.duplicate("0", 40), server) == :none
+    :ok = :sys.resume(server)
+  end
+
+  test "a check that is killed was not run, and runs again when asked", c do
+    Phoenix.PubSub.subscribe(Merge.PubSub, Checks.topic())
+    once = Path.join(c.dir, "once")
+    # Killed the first time (as when the server stops under it), fine the second.
+    server =
+      checks(c, "if [ -f #{once} ]; then echo checked; else touch #{once}; kill -TERM $$; fi")
+
+    want(c.repo, c.sha, server)
+    assert cut_off(server, c.sha) == :none
+    assert Checks.log(c.sha, server) =~ "Cut off before it ended"
+
+    want(c.repo, c.sha, server)
+    assert %{ok: true, log: "checked" <> _} = finished(server, c.sha)
+  end
+
+  test "a check that is killed every time fails the second time", c do
+    Phoenix.PubSub.subscribe(Merge.PubSub, Checks.topic())
+    server = checks(c, "kill -TERM $$")
+
+    want(c.repo, c.sha, server)
+    assert cut_off(server, c.sha) == :none
+
+    want(c.repo, c.sha, server)
+    assert %{ok: false, log: log} = finished(server, c.sha)
+    assert log =~ "Cut off 2 times"
+  end
+
+  test "a run whose end never arrived is seen gone on the second look, and runs again", c do
+    Phoenix.PubSub.subscribe(Merge.PubSub, Checks.topic())
+    go = Path.join(c.dir, "go")
+    server = checks(c, "while [ ! -f #{go} ]; do sleep 0.05; done; echo checked")
+    want(c.repo, c.sha, server)
+    assert {:running, _} = Checks.status(c.sha, server)
+
+    # As when its exit arrived while the code was being loaded: the command is
+    # gone and the process never heard.
+    gone = Port.open({:spawn, "true"}, [])
+    Port.close(gone)
+    :sys.replace_state(server, fn state -> put_in(state.running.port, gone) end)
+
+    want(c.repo, c.sha, server)
+    assert {:running, _} = Checks.status(c.sha, server)
+    File.write!(go, "")
+    want(c.repo, c.sha, server)
+    assert %{ok: true} = finished(server, c.sha)
+    assert Checks.log(c.sha, server) =~ "checked"
+  end
+
   test "runs the command in a checkout of exactly that commit, and keeps the result", c do
     server = checks(c, "git rev-parse HEAD; echo checked")
-    Checks.want(c.repo, c.sha, server)
+    want(c.repo, c.sha, server)
 
     assert %{ok: true, sha: sha, log: log, excerpt: nil} = finished(server, c.sha)
     assert sha == c.sha
@@ -42,13 +121,13 @@ defmodule Merge.ChecksTest do
     assert Checks.log(c.sha, server) =~ "checked"
 
     # Asked again: already known, not run again.
-    Checks.want(c.repo, c.sha, server)
+    want(c.repo, c.sha, server)
     refute_receive {:checks, _}, 200
   end
 
   test "a failing command is a failed result, with its output", c do
     server = checks(c, "echo 'test failed: 1 failure'; exit 1")
-    Checks.want(c.repo, c.sha, server)
+    want(c.repo, c.sha, server)
 
     assert %{ok: false, log: log} = finished(server, c.sha)
     assert log =~ "1 failure"
@@ -62,7 +141,7 @@ defmodule Merge.ChecksTest do
           "echo 'Found packages with security advisories'; seq 1 200; echo 'Result: 994 passed'; exit 1"
       )
 
-    Checks.want(c.repo, c.sha, server)
+    want(c.repo, c.sha, server)
 
     assert %{ok: false, log: log, excerpt: excerpt} = finished(server, c.sha)
     refute log =~ "Advisories:"
@@ -71,11 +150,11 @@ defmodule Merge.ChecksTest do
 
   test "while one runs, only the newest tip waits; a superseded one is skipped", c do
     server = checks(c, "sleep 0.3; git rev-parse HEAD")
-    Checks.want(c.repo, c.sha, server)
+    want(c.repo, c.sha, server)
     second = GitRepo.commit!(c.repo, %{"a" => "a"}, "Second")
     third = GitRepo.commit!(c.repo, %{"b" => "b"}, "Third")
-    Checks.want(c.repo, second, server)
-    Checks.want(c.repo, third, server)
+    want(c.repo, second, server)
+    want(c.repo, third, server)
 
     assert {:queued, nil} = Checks.status(third, server)
     assert %{ok: true} = finished(server, c.sha)
@@ -87,7 +166,7 @@ defmodule Merge.ChecksTest do
   test "the check a merged merge request shows: its own merge commit's, else main's while not pushed",
        c do
     server = checks(c, "true")
-    Checks.want(c.repo, c.sha, server)
+    want(c.repo, c.sha, server)
     assert %{ok: true} = finished(server, c.sha)
     tip = GitRepo.commit!(c.repo, %{"a" => "a"}, "Later merge")
 
@@ -110,7 +189,7 @@ defmodule Merge.ChecksTest do
   test "without a command there are no checks", c do
     server = checks(c, nil)
     refute Checks.enabled?(server)
-    Checks.want(c.repo, c.sha, server)
+    want(c.repo, c.sha, server)
     assert :none = Checks.status(c.sha, server)
   end
 
@@ -142,7 +221,7 @@ defmodule Merge.ChecksTest do
     test "runs after the first, in the same checkout, when the tip changes a watched path", c do
       server = checks(c, "echo first > ../order", "cat ../order; git rev-parse HEAD; echo built")
       tip = GitRepo.commit!(c.repo, %{"Dockerfile" => "FROM elixir\n"}, "Image")
-      Checks.want(c.repo, tip, server)
+      want(c.repo, tip, server)
 
       assert %{ok: true} = finished(server, tip)
       assert %{ok: true, log: log} = image_finished(server, tip)
@@ -155,7 +234,7 @@ defmodule Merge.ChecksTest do
     test "is not needed when the tip changes nothing the workflow watches", c do
       server = checks(c, "true", "echo built")
       tip = GitRepo.commit!(c.repo, %{"lib/app.ex" => "x\n"}, "Code")
-      Checks.want(c.repo, tip, server)
+      want(c.repo, tip, server)
 
       assert %{ok: true} = finished(server, tip)
       assert :not_needed = Checks.image_status(tip, server)
@@ -165,7 +244,7 @@ defmodule Merge.ChecksTest do
     test "a failed image build is a failed result, with its output", c do
       server = checks(c, "true", "echo 'tailwind fetch failed'; exit 1")
       tip = GitRepo.commit!(c.repo, %{"config/prod.exs" => "x\n"}, "Config")
-      Checks.want(c.repo, tip, server)
+      want(c.repo, tip, server)
 
       assert %{ok: false, log: log} = image_finished(server, tip)
       assert log =~ "tailwind fetch failed"
@@ -174,10 +253,10 @@ defmodule Merge.ChecksTest do
     test "a newer tip waiting when the first check ends skips the old tip's image check", c do
       server = checks(c, "sleep 0.3", "echo built")
       old = GitRepo.commit!(c.repo, %{"Dockerfile" => "FROM a\n"}, "Old")
-      Checks.want(c.repo, old, server)
+      want(c.repo, old, server)
       assert {:queued, nil} = Checks.image_status(old, server)
       new = GitRepo.commit!(c.repo, %{"Dockerfile" => "FROM b\n"}, "New")
-      Checks.want(c.repo, new, server)
+      want(c.repo, new, server)
 
       assert %{ok: true} = image_finished(server, new)
       assert :none = Checks.image_status(old, server)
@@ -196,7 +275,7 @@ defmodule Merge.ChecksTest do
 
     for n <- 1..40 do
       sha = GitRepo.commit!(c.repo, %{"N#{n}.md" => "#{n}\n"}, "N#{n}")
-      Checks.want(c.repo, sha, server)
+      want(c.repo, sha, server)
       assert Checks.image_status(sha, server) == :not_needed
     end
   end

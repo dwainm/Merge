@@ -60,6 +60,29 @@ defmodule Merge.Board do
       else: %{}
   end
 
+  @doc """
+  Keeps one other thing for pages to read without asking its process (the
+  checks' state): `view/1` reads it, nil when there is none.
+  """
+  def put_view(key, value) do
+    ensure()
+    :ets.insert(@table, {{:view, key}, value})
+    :ok
+  end
+
+  def view(key) do
+    with true <- up?(), [{_, value}] <- :ets.lookup(@table, {:view, key}) do
+      value
+    else
+      _ -> nil
+    end
+  end
+
+  def drop_view(key) do
+    if up?(), do: :ets.delete(@table, {:view, key})
+    :ok
+  end
+
   defp up?, do: :ets.whereis(@table) != :undefined
 
   defp ensure do
