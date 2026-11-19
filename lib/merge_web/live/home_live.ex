@@ -282,7 +282,13 @@ defmodule MergeWeb.HomeLive do
         queued={MapSet.new(@queue, & &1.branch)}
       />
 
-      <.servers :if={@servers != []} servers={@servers} branches={@branches} runs={@dev_runs} />
+      <.servers
+        :if={@servers != []}
+        servers={@servers}
+        branches={@branches}
+        runs={@dev_runs}
+        verdicts={@verdicts}
+      />
 
       <section :if={@done != []} class="mt-8">
         <h2 class="mb-3 text-sm font-semibold text-(--text-muted)">Merged and closed</h2>
@@ -638,11 +644,44 @@ defmodule MergeWeb.HomeLive do
   attr :branches, :any, required: true, doc: "MapSet of the branches with a merge request"
   attr :runs, :map, required: true, doc: "Merge.DevScript.runs/0"
 
+  attr :verdicts, :map, default: %{}, doc: "Merge.LiveStatus.verdict/2 of each open one"
+
   # Every tree of each repo, with its server to tap; a branch under review links to it.
+  #
+  # The section folds with a tap on its heading, and the browser keeps the
+  # choice (the hook below). Folded, the heading keeps one line: how many
+  # trees and servers are up, and in red the trees whose test site is down,
+  # by branch, so a down site is never hidden without a sign.
   defp servers(assigns) do
+    trees = Enum.flat_map(assigns.servers, & &1.trees)
+    sites_down = Enum.filter(trees, &site_down?(&1, assigns.verdicts))
+
+    assigns =
+      assign(assigns,
+        tree_count: length(trees),
+        up_count: Enum.count(trees, &(&1.status == :up)),
+        down: Enum.map(sites_down, &(&1.branch || &1.name))
+      )
+
     ~H"""
-    <section id="servers" class="mt-8">
-      <h2 class="mb-3 text-sm font-semibold text-(--text-muted)">Trees and servers</h2>
+    <details id="servers" open phx-hook=".ServersFold" class="group/s mt-8">
+      <summary
+        id="servers-heading"
+        class="mb-3 flex cursor-pointer list-none flex-wrap items-baseline gap-x-2 py-1 text-sm select-none [&::-webkit-details-marker]:hidden"
+      >
+        <span class="text-xs text-(--text-faint) transition group-open/s:rotate-90">▸</span>
+        <h2 class="font-semibold text-(--text-muted)">Trees and servers</h2>
+        <span
+          id="servers-folded"
+          class="w-full pl-4 text-xs text-(--text-muted) group-open/s:hidden"
+        >
+          {count(@tree_count, "tree")}, {count(@up_count, "server")} up<span
+            :if={@down != []}
+            id="servers-folded-down"
+            class="font-medium text-(--bad-text)"
+          >; test site down: {fold_names(@down)}</span>
+        </span>
+      </summary>
       <div :for={repo <- @servers} id={"servers-#{repo.name}"} class="mb-4">
         <h3 class="mb-1 flex items-baseline justify-between gap-3 text-xs">
           <span class="font-medium text-(--text-2)">{repo.name}</span>
@@ -679,9 +718,55 @@ defmodule MergeWeb.HomeLive do
           </li>
         </ul>
       </div>
-    </section>
+    </details>
+    <script :type={Phoenix.LiveView.ColocatedHook} name=".ServersFold">
+      // Folded or open, as the reader last left it: kept in localStorage and
+      // put back on mount and after each patch (the refresh would otherwise
+      // open it again, as the server renders it).
+      export default {
+        key: "merge:fold:home:servers",
+        mounted() {
+          this.restore()
+          this.onToggle = () => {
+            if (this.restoring) { this.restoring = false; return }
+            try { localStorage.setItem(this.key, this.el.open ? "open" : "closed") } catch (_) {}
+          }
+          this.el.addEventListener("toggle", this.onToggle)
+        },
+        updated() { this.restore() },
+        destroyed() { this.el.removeEventListener("toggle", this.onToggle) },
+        restore() {
+          let kept = null
+          try { kept = localStorage.getItem(this.key) } catch (_) {}
+          if (kept === null) return
+          const open = kept === "open"
+          if (this.el.open !== open) {
+            this.restoring = true
+            this.el.open = open
+          }
+        }
+      }
+    </script>
     """
   end
+
+  # A tree's test site is down when its server answers 5xx or not at all, or
+  # when Merge.LiveStatus says so for the merge request in it (a `.dev-url`
+  # with no server running).
+  defp site_down?(tree, verdicts) do
+    reasons =
+      case verdicts[tree.branch] do
+        %{reasons: reasons} -> reasons
+        _ -> []
+      end
+
+    tree.status in [:error, :not_answering] or Enum.any?(reasons, &match?({:site_down, _}, &1))
+  end
+
+  defp fold_names(names) when length(names) <= 3, do: Enum.join(names, ", ")
+
+  defp fold_names(names),
+    do: (names |> Enum.take(2) |> Enum.join(", ")) <> " and #{length(names) - 2} more"
 
   attr :id, :string, required: true
   attr :merge_requests, :list, required: true

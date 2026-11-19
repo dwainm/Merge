@@ -60,4 +60,19 @@ defmodule MergeWeb.ServersPanelTest do
     Servers.refresh()
     assert has_element?(view, "#mr-tree", "no server")
   end
+
+  test "the section folds from its heading, and its folded line names a test site that is down",
+       c do
+    {:ok, view, _html} = live(c.conn, ~p"/")
+    view = settled(view)
+    # A details the hook keeps folded or open; its heading is the toggle.
+    assert has_element?(view, "details#servers[phx-hook] > summary#servers-heading")
+
+    Servers.note_status(c.repo, {:up, nil})
+    assert has_element?(view, "#servers-folded", "up")
+    refute has_element?(view, "#servers-folded-down")
+
+    Servers.note_status(c.repo, {:not_answering, "not answering"})
+    assert has_element?(view, "#servers-folded-down", c.branch)
+  end
 end
