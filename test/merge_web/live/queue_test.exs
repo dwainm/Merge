@@ -144,6 +144,7 @@ defmodule MergeWeb.QueueTest do
 
     {:ok, _} = MergeRequest.working(one, "Rebuilding to the new decision", "agent")
     assert has_element?(view, "#mr-header", "In progress")
-    assert has_element?(view, "#working-note", "Rebuilding to the new decision")
+    assert has_element?(view, "#live-status", "Rebuilding to the new decision")
+    assert has_element?(view, "#working-note")
   end
 end

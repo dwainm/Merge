@@ -75,6 +75,8 @@ defmodule Merge.MergeRequest do
     :groups,
     :body_updated_at,
     :own_base,
+    # The head the reviewer's page was last opened at: `looked/1`.
+    :looked,
     conflicts: [],
     branch_state: :ok,
     status: :open,
@@ -138,6 +140,14 @@ defmodule Merge.MergeRequest do
   new one. Returns `{:ok, mr, :opened | :existing | :body_updated}`.
   """
   def open(attrs) do
+    with {:ok, mr, _how} = opened <- do_open(attrs) do
+      # Opened for review: the stream's word, in its tree (`Merge.StatusFile`).
+      write_status(mr, :ready, nil)
+      opened
+    end
+  end
+
+  defp do_open(attrs) do
     attrs = Map.new(attrs)
     branch = Map.fetch!(attrs, :branch)
 
@@ -146,7 +156,7 @@ defmodule Merge.MergeRequest do
         case GenServer.call(pid, {:register, attrs[:opened_by], groups(attrs), attrs[:body]}) do
           :ok -> {:ok, get!(branch), :existing}
           :body_updated -> {:ok, get!(branch), :body_updated}
-          :done -> open(attrs)
+          :done -> do_open(attrs)
         end
 
       :error ->
@@ -160,9 +170,9 @@ defmodule Merge.MergeRequest do
                  Merge.MergeRequests,
                  {__MODULE__, {:restore, stored}}
                ) do
-          open(attrs)
+          do_open(attrs)
         else
-          {:error, {:already_started, _pid}} -> open(attrs)
+          {:error, {:already_started, _pid}} -> do_open(attrs)
           _ -> open_new(attrs, branch)
         end
     end
@@ -186,7 +196,7 @@ defmodule Merge.MergeRequest do
           {:ok, get!(branch), :opened}
 
         {:error, {:already_started, _pid}} ->
-          open(attrs)
+          do_open(attrs)
 
         {:error, reason} ->
           {:error, reason}
@@ -376,7 +386,19 @@ defmodule Merge.MergeRequest do
   """
   def decide(branch, verdict, body \\ "", by \\ "reviewer")
       when verdict in [:approved, :needs_work] do
-    call(branch, {:decide, verdict, String.trim(body || ""), by})
+    with {:ok, decision} = decided <-
+           call(branch, {:decide, verdict, String.trim(body || ""), by}) do
+      # Sent back: the author's turn, in the status file too, before anyone reads it.
+      if verdict == :needs_work,
+        do:
+          write_status(
+            branch,
+            :in_progress,
+            "Sent back: " <> (blank_to_nil(decision.body) || "see the comments")
+          )
+
+      decided
+    end
   end
 
   @doc """
@@ -384,7 +406,51 @@ defmodule Merge.MergeRequest do
   (what they are doing) shown under the badge, until `addressed/4` or the
   branch is opened again. The other agents hear it.
   """
-  def working(branch, note \\ nil, by \\ nil), do: call(branch, {:working, note, by})
+  def working(branch, note \\ nil, by \\ nil, write? \\ true) do
+    with {:ok, _} = done <- call(branch, {:working, note, by}) do
+      if write?, do: write_status(branch, :in_progress, note)
+      done
+    end
+  end
+
+  @doc """
+  The author hands it back for review without a commit: its status file
+  turned to `ready to review` (`Merge.LiveStatus`). In progress becomes
+  Needs review; anything else stays as it is. Answers `{:ok, status}`.
+  """
+  def ready(branch, note \\ nil, by \\ nil), do: call(branch, {:ready, note, by})
+
+  @doc """
+  The reviewer opened the merge request's page: its head now is what they
+  last looked at (`looked`, `%{head, at}`), so the next visit can say what
+  came since. Answers at once; the merge request takes it when it can.
+  """
+  def looked(branch) do
+    case lookup(branch) do
+      {:ok, pid} -> GenServer.cast(pid, :looked)
+      :error -> :ok
+    end
+
+    :ok
+  end
+
+  @doc """
+  The commits on the branch since the reviewer last looked (`looked/1`),
+  newest first, without the merges of the base: [] when nothing came, or
+  when what they looked at is no longer on the branch.
+  """
+  def since_looked(mr, looked \\ :stored) do
+    looked = if looked == :stored, do: Map.get(mr, :looked), else: looked
+
+    case looked do
+      %{head: head} when head != mr.head ->
+        new = Enum.take_while(mr.commits, &(&1.sha != head))
+        if length(new) == length(mr.commits), do: [], else: Enum.reject(new, &base_merge?/1)
+
+      _ ->
+        []
+    end
+  end
 
   @doc """
   The note of the `working/3` that put it In progress, or nil (not in
@@ -421,7 +487,10 @@ defmodule Merge.MergeRequest do
          repo = git_repo(mr),
          {:ok, sha} <- Git.rev_parse(repo, commit),
          true <- Git.on_branch?(repo, sha, mr.branch) || {:error, :not_on_branch} do
-      call(branch, {:addressed, sha, note, by, groups}, @settle_ms)
+      with {:ok, _} = done <- call(branch, {:addressed, sha, note, by, groups}, @settle_ms) do
+        write_status(mr, :ready, note && elem(Merge.Body.split_groups(note), 0))
+        done
+      end
     else
       # Done: the process says so, in its own words.
       true -> call(branch, {:addressed, commit, note, by, groups})
@@ -786,6 +855,12 @@ defmodule Merge.MergeRequest do
     {:reply, {:ok, entry}, changed(tell_waiters(state))}
   end
 
+  def handle_call({:ready, _note, _by}, _from, %{status: :in_progress} = state) do
+    {:reply, {:ok, :open}, changed(%{state | status: :open})}
+  end
+
+  def handle_call({:ready, _note, _by}, _from, state), do: {:reply, {:ok, state.status}, state}
+
   def handle_call({:body, body, by}, _from, state) do
     if blank_to_nil(body) == nil do
       {:reply, {:error, "A body needs some text."}, state}
@@ -851,6 +926,17 @@ defmodule Merge.MergeRequest do
     Events.emit("closed", state.branch, detail)
     state = changed(tell_closed(state))
     {:reply, {:ok, status}, state}
+  end
+
+  @impl true
+  def handle_cast(:looked, state) do
+    case Map.get(state, :looked) do
+      %{head: head} when head == state.head ->
+        {:noreply, state}
+
+      _ ->
+        {:noreply, changed(Map.put(state, :looked, %{head: state.head, at: DateTime.utc_now()}))}
+    end
   end
 
   @impl true
@@ -1444,6 +1530,23 @@ defmodule Merge.MergeRequest do
     |> Map.put(:waiting, waiting(state))
     # True while it is first read, or read again for an `addressed`: the page says so.
     |> Map.put(:reading, match?(%{kind: kind} when kind != :look, Map.get(state, :job)))
+  end
+
+  # The stream's word in its tree's status file: the tree the branch was last
+  # seen checked out in, else the one git says now. Never fails the command.
+  defp write_status(branch, state, note) when is_binary(branch) do
+    case Merge.Board.summary(branch) do
+      nil -> :ok
+      mr -> write_status(mr, state, note)
+    end
+  end
+
+  defp write_status(mr, state, note) do
+    tree = Merge.LiveStatus.tree(mr.branch) || Git.checked_out_in(git_repo(mr), mr.branch)
+    Merge.StatusFile.write(tree, state, blank_to_nil(note))
+    Merge.LiveStatus.poke()
+  rescue
+    _ -> :ok
   end
 
   # The groups an open brings: `attrs.groups`, else a `groups` block in the body.

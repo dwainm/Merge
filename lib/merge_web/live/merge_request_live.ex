@@ -8,7 +8,7 @@ defmodule MergeWeb.MergeRequestLive do
 
   use MergeWeb, :live_view
 
-  alias Merge.{AutoMerge, Checks, Drift, Git, Groups, MergeRequest, Queue, Servers}
+  alias Merge.{AutoMerge, Checks, Drift, Git, Groups, LiveStatus, MergeRequest, Queue, Servers}
   import MergeWeb.MergeRequestComponents
 
   # The queue's tabs. A tab dropping out never moves this page.
@@ -27,6 +27,7 @@ defmodule MergeWeb.MergeRequestLive do
       Phoenix.PubSub.subscribe(Merge.PubSub, Checks.topic())
       Phoenix.PubSub.subscribe(Merge.PubSub, Servers.topic())
       Phoenix.PubSub.subscribe(Merge.PubSub, AutoMerge.topic())
+      Phoenix.PubSub.subscribe(Merge.PubSub, LiveStatus.topic())
     end
 
     mr =
@@ -41,7 +42,22 @@ defmodule MergeWeb.MergeRequestLive do
      |> assign(tree: tree(mr, connected?(socket)))
      |> assign(line_form: blank_form(:line), review_form: blank_form(:review))
      |> assign(dialog: nil, dialog_error: nil, moving_to: nil)
-     |> assign(hold: AutoMerge.hold_entry(branch))}
+     |> assign(hold: AutoMerge.hold_entry(branch))
+     |> assign(live: LiveStatus.get(branch), last_look: mr && Map.get(mr, :looked))
+     |> looking(mr)}
+  end
+
+  # The reviewer is looking: what they last looked at stays `last_look` for
+  # this visit (the banner, and "Since you looked"), and the merge request
+  # takes the head now as the next visit's. The work folder is read again at
+  # once. Neither waits.
+  defp looking(socket, mr) do
+    if (connected?(socket) and mr) && not MergeRequest.done?(mr) do
+      MergeRequest.looked(mr.branch)
+      LiveStatus.poke()
+    end
+
+    socket
   end
 
   # The merge request's tree as the watcher last read the trees (every minute).
@@ -72,6 +88,7 @@ defmodule MergeWeb.MergeRequestLive do
       cond do
         sha = params["commit"] -> {:commit, sha}
         params["since"] == "review" -> :since
+        params["since"] == "look" and match?(%{head: _}, socket.assigns.last_look) -> :since_look
         true -> :branch
       end
 
@@ -126,6 +143,11 @@ defmodule MergeWeb.MergeRequestLive do
          |> push_navigate(to: MergeWeb.mr_path(next.branch))}
     end
   end
+
+  def handle_info({:live, live}, %{assigns: %{mr: %{}}} = socket),
+    do: {:noreply, socket |> assign(live: live[socket.assigns.branch]) |> assign_derived()}
+
+  def handle_info({:live, _live}, socket), do: {:noreply, socket}
 
   def handle_info({:servers, servers}, socket) do
     {:noreply, assign(socket, tree: Servers.tree_for(socket.assigns.mr, servers))}
@@ -261,6 +283,9 @@ defmodule MergeWeb.MergeRequestLive do
   defp no_changes({:commit, _}, %{merge_of: base}, _moved) when is_binary(base),
     do: "Nothing of the author's: #{base} merged cleanly."
 
+  defp no_changes(:since_look, _selected, _base),
+    do: "Nothing of the author's since you looked."
+
   defp no_changes(:since, _selected, base) when is_binary(base),
     do: "Nothing of the author's since your review: #{base} merged in cleanly."
 
@@ -295,6 +320,11 @@ defmodule MergeWeb.MergeRequestLive do
               repo = MergeRequest.git_repo(mr)
               Git.since_diff(repo, MergeRequest.own_base(mr), d.head, mr.head)
           end
+
+        # Only the author's changes since the reviewer last opened this page.
+        :since_look ->
+          repo = MergeRequest.git_repo(mr)
+          Git.since_diff(repo, MergeRequest.own_base(mr), socket.assigns.last_look.head, mr.head)
       end
 
     case result do
@@ -339,12 +369,13 @@ defmodule MergeWeb.MergeRequestLive do
 
   # The files in groups: the author's, then the stack's, read at the view's tip
   # (and, for a deleted file, at the commit before it).
-  defp groups(%{assigns: %{mr: mr, view: view}}, files) do
+  defp groups(%{assigns: %{mr: mr, view: view} = assigns}, files) do
     {tip, before} =
       case view do
         :branch -> {mr.head, mr.merge_base || mr.base}
         {:commit, sha} -> {sha, sha <> "^"}
         :since -> {mr.head, last_decision(mr).head}
+        :since_look -> {mr.head, assigns.last_look.head}
       end
 
     Groups.build(MergeRequest.git_repo(mr), files, tip, before, Map.get(mr, :groups))
@@ -389,9 +420,13 @@ defmodule MergeWeb.MergeRequestLive do
 
     base_moved = after_review && Enum.find_value(after_review, &Map.get(&1, :merge_of))
 
+    verdict = LiveStatus.verdict(mr, socket.assigns[:live])
+
     socket
     |> main_checks()
     |> assign(
+      verdict: verdict,
+      new_looked: MergeRequest.since_looked(mr, socket.assigns[:last_look]),
       line_comments: line_comments,
       new_since: new_since,
       base_moved: base_moved,
@@ -452,7 +487,8 @@ defmodule MergeWeb.MergeRequestLive do
           <div class="flex shrink-0 items-center gap-1.5">
             <.merge_pill :if={not MergeRequest.done?(@mr)} mr={@mr} />
             <.checks_pill check={@pill} />
-            <.status status={@mr.status} merged={@mr.merged} />
+            <.live_badge :if={@verdict} verdict={@verdict} id="live-badge" />
+            <.status :if={!@verdict} status={@mr.status} merged={@mr.merged} />
             <.queue_button
               :if={@mr.status in [:open, :in_progress]}
               branch={@mr.branch}
@@ -482,18 +518,41 @@ defmodule MergeWeb.MergeRequestLive do
             in <span class="font-mono">{@tree.name}</span>
             <.server tree={@tree} run={@dev_runs[@tree.path]} />
           </span>
+          <span
+            :if={@verdict && match?(%{site: %{state: :down}}, @live)}
+            id="test-site-down"
+            class="inline-flex items-center gap-1 font-medium text-(--bad-text)"
+            title={@live.site.url}
+          >
+            <.icon name="hero-signal-slash-mini" class="size-3.5" /> Test site is down
+            <span :if={@live.site.reason} class="font-normal">({@live.site.reason})</span>
+          </span>
           <span :if={!@tree} id="mr-tree" class="text-(--text-faint)">no tree</span>
         </div>
-        <p
-          :if={working = MergeRequest.working_note(@mr)}
-          id="working-note"
-          class="mt-2 flex flex-wrap items-baseline gap-x-2 rounded-md border border-(--warn-border) bg-(--warn-bg) px-3 py-1.5 text-sm text-(--warn-text)"
+        <%!-- What is in the way of a review, read from the work folder: the
+             status file, unsaved changes, the test site. --%>
+        <div
+          :if={@verdict && @verdict.reasons != []}
+          id="live-status"
+          class={[
+            "mt-2 rounded-md border px-3 py-2 text-sm",
+            if(@verdict.tone == :down,
+              do: "border-(--bad-border) bg-(--bad-bg) text-(--bad-text)",
+              else: "border-(--warn-border) bg-(--warn-bg) text-(--warn-text)"
+            ),
+            @verdict.tone == :unsaid && "border-(--border)! bg-(--surface)! text-(--text-2)!"
+          ]}
         >
-          <span>
-            <span class="font-medium">In progress</span>{if(working.note, do: ": #{working.note}")}
-          </span>
-          <span class="text-xs opacity-80">{working.by}, {ago(working.at)}</span>
-        </p>
+          <p class="font-medium">Not ready to review</p>
+          <.live_reasons verdict={@verdict} id="live-reasons" class="mt-1 text-sm" />
+          <p
+            :if={working = MergeRequest.working_note(@mr)}
+            id="working-note"
+            class="mt-1 text-xs opacity-80"
+          >
+            Put in progress by {working.by}, {ago(working.at)}
+          </p>
+        </div>
         <div
           :if={@mr.body != ""}
           id="mr-body"
@@ -761,7 +820,36 @@ defmodule MergeWeb.MergeRequestLive do
       </p>
 
       <div
-        :if={@new_since && MapSet.size(@new_since) > 0 && @view != :since}
+        :if={@new_looked != [] && @view != :since_look}
+        id="since-looked"
+        class="mb-4 rounded-lg border border-(--info-border) bg-(--info-bg) px-3 py-2 text-sm text-(--info-text)"
+      >
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <span class="font-medium">
+            {count(@new_looked, "new commit")} since you last looked
+            <span class="font-normal opacity-80">{ago(@last_look.at)}</span>
+          </span>
+          <.link
+            id="since-looked-link"
+            patch={MergeWeb.mr_path(@mr.branch) <> "?since=look"}
+            class="font-medium underline"
+          >
+            Show what changed
+          </.link>
+        </div>
+        <ul class="mt-1 space-y-0.5 text-xs">
+          <li :for={c <- Enum.take(@new_looked, 5)} class="flex min-w-0 gap-2">
+            <span class="shrink-0 font-mono opacity-70">{c.short}</span>
+            <span class="min-w-0 truncate">{c.subject}</span>
+          </li>
+          <li :if={length(@new_looked) > 5} class="opacity-70">
+            and {length(@new_looked) - 5} more
+          </li>
+        </ul>
+      </div>
+
+      <div
+        :if={@new_since && MapSet.size(@new_since) > 0 && @view != :since && !@last_look}
         id="since-review"
         class="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-(--warn-border) bg-(--warn-bg) px-3 py-2 text-sm text-(--warn-text)"
       >
@@ -863,6 +951,18 @@ defmodule MergeWeb.MergeRequestLive do
               ]}
             >
               Since your review
+            </.link>
+            <.link
+              :if={@last_look && @last_look.head != @mr.head}
+              id="since-look-tab"
+              patch={MergeWeb.mr_path(@mr.branch) <> "?since=look"}
+              class={[
+                "rounded-md px-2.5 py-1",
+                (@view == :since_look && "bg-(--btn-bg) text-(--btn-text)") ||
+                  "bg-(--surface) text-(--text-2) ring-1 ring-(--border)"
+              ]}
+            >
+              Since you looked
             </.link>
             <span
               :if={@selected}

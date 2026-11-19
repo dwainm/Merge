@@ -42,13 +42,14 @@ No GitHub and no database: each merge request is a process, gone when the server
         merge mr close checkin
 
     merge mr list
-        merge mr list                   # checkin  needs review  Coffee shop check-in  (waiting: checkin)  <url>
+        merge mr list                   # checkin  being changed: 2 files not committed  Coffee shop check-in  (waiting: checkin)  <url>
 
     merge mr watch [--since TIME]
         merge mr watch --since 2h       # 2026-10-19T14:03:22Z comment checkin lib/app.ex:12 reviewer: Why?
 
 `mr watch` prints one line per event, as it happens, and never returns: `opened`, `comment`,
-`approved`, `needs-work`, `working`, `addressed`, `new-commits`, `body-updated`, `conflicts`, `merges-cleanly`, `rewritten`,
+`approved`, `needs-work`, `working`, `addressed`, `ready-to-review`, `not-ready` (see "What is
+true in the work folder"), `new-commits`, `body-updated`, `conflicts`, `merges-cleanly`, `rewritten`,
 `branch-gone`, `merged`, `auto-merged` (after the `merged` line of a merge Merge made itself:
 `auto-merged checkin 1a2b3c4`), `auto-merge-held` (once per reason: `auto-merge-held checkin
 main's worktree has uncommitted changes`), `on-origin`, `closed`, and for `main`: `main-tip`, `checks-running`,
@@ -65,6 +66,58 @@ checkout, the Auto Push toggle, `url`) from `~/.merge` to `DIR`, and keeps that 
 localhost. A test server beside the service, then, remembers without touching the
 service's state: `MERGE_HOME=/tmp/m merge serve --port 4800 --repo /tmp/m/clone`, and
 `MERGE_HOME=/tmp/m merge mr watch` to follow it.
+
+## What is true in the work folder
+
+What a merge request reads comes from its work folder (the worktree that has its branch
+checked out), not only from what a stream remembered to say. Every 15 seconds, and when its
+page or the home page opens, Merge reads three things there:
+
+- **The status file**, `.mr.status`: the first line `in progress` or `ready to review`, an
+  optional second line a short note shown beside it. The stream writes it:
+
+      printf 'in progress\nRebuilding the stock page\n' > .mr.status
+      printf 'ready to review\n' > .mr.status
+
+  A missing file, or one that says anything else, is "not said", never ready. The commands
+  write the same file, so there is one source: `mr open` and `mr addressed` write `ready to
+  review`, `mr working` writes `in progress` with its note, and a Reject writes `in progress`
+  with "Sent back: …". The merge request follows the file when the file changes: it turning
+  to `in progress` is a `working` (the other agents hear it), it turning to `ready to review`
+  hands an In progress one back for review. Opening the request, its body, replying to a
+  comment, and waiting for a decision stay commands.
+
+  The file is never committed and never makes the tree look changed: the first time Merge
+  writes one it adds `/.mr.status` to the repo's `info/exclude` (under the git directory, one
+  for the repo and all its worktrees; no `.gitignore` is touched), and the count of changes
+  leaves it out.
+- **Unsaved changes**: `git --no-optional-locks status --porcelain --untracked-files=no`.
+  Changes to tracked files that aren't committed, staged or not, show "Being changed: N files
+  not committed", whatever the file says. Untracked and ignored files don't count.
+- **The test site**: the tree's `.dev-url`, else the port of a server listening from inside
+  it. A `.dev-url` with no server listening is down ("no server running"); otherwise a GET (5
+  seconds, no redirect followed) below 500 is up, and a 5xx, a 502 or no answer is down. A
+  tree with neither has no test site and no such line.
+
+**A merge request reads "Ready to review" only when the file says so, nothing tracked is
+unsaved, and the test site answers (where it has one).** Otherwise its badge says what is in
+the way first (In progress, Not said, Being changed, Test site down) and the list and its
+page say all of it, in a few words; "Test site is down" also shows beside the tree, where you
+tap to test. Approving stays possible: this informs, it doesn't lock. A merge request whose
+branch is checked out nowhere has nothing on disk to read: it reads "Needs review" or "In
+progress", what the commands last said. `mr list` and MCP `list_merge_requests` say the same
+line. When what it reads changes, `mr watch` gets `ready-to-review <branch>`, or `not-ready
+<branch> <what is in the way>` (again only when what is in the way changes, not a count).
+
+The round is one process, one round at a time: each tree is read in a task of its own under a
+time limit (`timeout 8` on git), and a tree that runs out keeps its last reading, so a slow
+`git status` on a loaded machine never holds a page or piles up. Per round: one `git worktree
+list` per repo, one `ss`, and per open merge request one `git status`, one small file and one
+GET. Pages read the result from the board.
+
+**Since you looked.** Opening a merge request's page records its head as what the reviewer
+last looked at. When the branch has moved since, the list says "N new commits since you
+looked" and the page lists them, with "Since you looked" for only the author's changes since.
 
 ## The files, in reading order
 
@@ -307,7 +360,8 @@ goes back to that.
 - **The review goes in rounds.** A comment belongs to the round it was written in; a decision closes
   the round; `addressed` answers it with a commit and a note, recomputes the diff and opens the next
   round. The wait output lists this round's comments, then the earlier ones with their notes.
-- **The badge says whose turn it is.** Needs review: the reviewer's (open, after `addressed`, after
+- **The badge says what is true** (see "What is true in the work folder"), and under it whose
+  turn it is. Needs review: the reviewer's (open, after `addressed`, after
   opening the branch again). In progress: the author's, set by Reject and by `merge mr working`
   (MCP `working`) when the direction changes without a Reject; its note shows under the badge,
   in the other agents' `mr wait` and in `mr list`. `addressed` or opening the branch again hands it
