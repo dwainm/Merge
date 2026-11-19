@@ -14,6 +14,8 @@ Environment=PORT=4747
 Environment=MERGE_REPO=/root/projects/dayofplenty
 Environment="MERGE_CHECK=MIX_ENV=test MIX_TEST_PARTITION=_merge_checks; export MIX_ENV MIX_TEST_PARTITION; mix deps.get && mix compile --warnings-as-errors && mix check"
 Environment="MERGE_CHECK_IMAGE=docker build --quiet -t dop-merge-check ."
+# Main is pushed this long after its tip was proven and has not moved (the user, 19 Nov 2026: 2 minutes, was 5).
+Environment=MERGE_AUTO_PUSH_AFTER=2m
 ExecStart=%h/.merge/release/bin/merge start
 Restart=always
 RestartSec=3
