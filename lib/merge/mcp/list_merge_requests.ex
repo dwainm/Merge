@@ -20,7 +20,10 @@ defmodule Merge.MCP.ListMergeRequests do
                 do: "nobody waiting",
                 else: "waiting: " <> Enum.join(mr.waiting, ", ")
 
-            state = MergeWeb.MergeRequestComponents.status_label(mr.status)
+            state =
+              Merge.LiveStatus.line(Merge.LiveStatus.verdict(mr, Merge.LiveStatus.get(mr.branch))) ||
+                MergeWeb.MergeRequestComponents.status_label(mr.status, mr.merged)
+
             "#{mr.branch}  #{state}  #{mr.title}  (#{waiting})  #{MergeWeb.mr_url(mr.branch)}"
           end)
       end

@@ -6,7 +6,7 @@ defmodule MergeWeb.ApiController do
 
   use MergeWeb, :controller
 
-  alias Merge.{MergeRequest, Report}
+  alias Merge.{LiveStatus, MergeRequest, Report}
 
   # How long one wait request is held open; the CLI asks again until there is news.
   @wait_ms 50_000
@@ -113,7 +113,19 @@ defmodule MergeWeb.ApiController do
   end
 
   defp summary(mr) do
+    live = LiveStatus.get(mr.branch)
+    verdict = LiveStatus.verdict(mr, live)
+    since = MergeRequest.since_looked(mr)
+
     %{
+      # What a person sees (`Merge.LiveStatus.verdict/2`): nil once approved, merged or closed.
+      state: verdict && verdict.label,
+      ready: verdict && verdict.ready?,
+      in_the_way: if(verdict, do: Enum.map(verdict.reasons, &elem(&1, 1)), else: []),
+      line: LiveStatus.line(verdict),
+      tree: live && live[:tree],
+      test_site: live && live[:site] && Map.take(live.site, [:state, :url, :reason]),
+      new_since_looked: Enum.map(since, &%{short: &1.short, subject: &1.subject}),
       branch: mr.branch,
       base: mr.base,
       repo: mr.repo,

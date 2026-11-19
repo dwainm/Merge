@@ -17,6 +17,8 @@ defmodule Merge.Application do
       Merge.Checks,
       Merge.DevScript,
       Merge.Watcher,
+      # What is true in each open merge request's work folder, every few seconds.
+      Merge.LiveStatus,
       {Merge.MCP, transport: :streamable_http, request_timeout: Merge.MCP.request_timeout()},
       # Start to serve requests, typically the last entry
       MergeWeb.Endpoint

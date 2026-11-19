@@ -57,6 +57,66 @@ defmodule MergeWeb.MergeRequestComponents do
     """
   end
 
+  attr :verdict, :map, required: true, doc: "Merge.LiveStatus.verdict/2 of an open merge request"
+  attr :id, :string, default: nil
+
+  @doc """
+  An open merge request's badge, from what is true in its work folder: blue
+  when it is the reviewer's turn (Ready to review, or Needs review when there
+  is no folder to read), amber while it is being worked on or changed, red
+  when its test site is down, grey when its status file says nothing.
+  """
+  def live_badge(assigns) do
+    ~H"""
+    <span
+      id={@id}
+      data-tone={@verdict.tone}
+      class={[
+        "shrink-0 rounded-full px-2 py-0.5 text-xs font-medium whitespace-nowrap transition-colors duration-300",
+        @verdict.tone == :ready && "bg-(--info-bg) text-(--info-text)",
+        @verdict.tone == :working && "bg-(--warn-bg) text-(--warn-text)",
+        @verdict.tone == :down && "bg-(--bad-bg) text-(--bad-text)",
+        @verdict.tone == :unsaid && "bg-(--surface-2) text-(--text-2)"
+      ]}
+    >
+      {@verdict.label}
+    </span>
+    """
+  end
+
+  attr :verdict, :map, required: true
+  attr :id, :string, required: true
+  attr :class, :string, default: "mt-1.5 text-xs"
+
+  @doc "What is in the way of a merge request that isn't ready, one short item each."
+  def live_reasons(assigns) do
+    ~H"""
+    <ul
+      :if={@verdict.reasons != []}
+      id={@id}
+      class={["flex flex-wrap items-center gap-x-3 gap-y-1", @class]}
+    >
+      <li
+        :for={{kind, text} <- @verdict.reasons}
+        data-kind={kind}
+        class={["inline-flex min-w-0 items-center gap-1", reason_colour(kind)]}
+      >
+        <.icon name={reason_icon(kind)} class="size-3.5 shrink-0" />
+        <span class="min-w-0 break-words">{text}</span>
+      </li>
+    </ul>
+    """
+  end
+
+  defp reason_icon(:in_progress), do: "hero-wrench-mini"
+  defp reason_icon(:changes), do: "hero-pencil-square-mini"
+  defp reason_icon(:site_down), do: "hero-signal-slash-mini"
+  defp reason_icon(:not_said), do: "hero-question-mark-circle-mini"
+
+  defp reason_colour(:site_down), do: "font-medium text-(--bad-text)"
+  defp reason_colour(:not_said), do: "text-(--text-muted)"
+  defp reason_colour(_kind), do: "text-(--warn-text)"
+
   attr :branch, :string, required: true
   attr :queued, :boolean, required: true
   attr :class, :string, default: nil

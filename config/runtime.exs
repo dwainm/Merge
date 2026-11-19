@@ -27,6 +27,10 @@ config :merge, MergeWeb.Endpoint,
 # How often the watcher fetches origin and checks main and the merges; off in tests.
 config :merge, :watch_ms, if(config_env() != :test, do: 60_000)
 
+# How often the open merge requests' work folders are read (status file, unsaved
+# changes, test site: Merge.LiveStatus); off in tests.
+config :merge, :live_ms, if(config_env() != :test, do: 15_000)
+
 # Where each merge request is kept on disk (Merge.Store). Tests keep nothing,
 # and neither does an ad-hoc `merge serve` beside the main one (MERGE_STORE=off).
 config :merge,

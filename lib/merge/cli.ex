@@ -182,10 +182,20 @@ defmodule Merge.CLI do
           |> Enum.filter(& &1)
           |> Enum.map_join(&("  " <> &1))
 
-        note = if mr["working"], do: ": #{mr["working"]}", else: ""
+        # An open one says what is true in its work folder (`Merge.LiveStatus`).
+        state =
+          mr["line"] ||
+            state(mr["status"]) <> if(mr["working"], do: ": #{mr["working"]}", else: "")
+
+        since =
+          case mr["new_since_looked"] || [] do
+            [] -> ""
+            [_] -> "  1 new commit since you looked"
+            commits -> "  #{length(commits)} new commits since you looked"
+          end
 
         IO.puts(
-          "#{mr["branch"]}  #{state(mr["status"])}#{note}#{merged}#{flags}  #{mr["title"]}  (#{waiting})  #{mr["url"]}"
+          "#{mr["branch"]}  #{lower_first(state)}#{merged}#{flags}#{since}  #{mr["title"]}  (#{waiting})  #{mr["url"]}"
         )
       end
 
@@ -284,6 +294,9 @@ defmodule Merge.CLI do
         end
     end
   end
+
+  defp lower_first(<<c::utf8, rest::binary>>), do: String.downcase(<<c::utf8>>) <> rest
+  defp lower_first(text), do: text
 
   defp state("open"), do: "needs review"
   defp state("in_progress"), do: "in progress"

@@ -312,18 +312,48 @@ defmodule Merge.Servers do
   end
 
   defp url(_path, []), do: nil
+  defp url(path, [port | _]), do: dev_url(path) || "http://localhost:#{port}"
 
-  defp url(path, [port | _]) do
+  @doc "The tree's `.dev-url`, or nil when it has none (or an empty one)."
+  def dev_url(path) do
     case File.read(Path.join(path, ".dev-url")) do
       {:ok, url} ->
         case String.trim(url) do
-          "" -> "http://localhost:#{port}"
+          "" -> nil
           url -> url
         end
 
       _ ->
-        "http://localhost:#{port}"
+        nil
     end
+  end
+
+  @doc """
+  Sets one tree's status in what was read last, when it differs, and
+  broadcasts it: `Merge.LiveStatus` probes the trees of the open merge
+  requests more often than the watcher's round, and the racks say the same.
+  A tree not in the last reading is left to the next one.
+  """
+  def note_status(path, {status, reason}) do
+    with repos when is_list(repos) <- current(),
+         %{} = tree <- Enum.find_value(repos, &Enum.find(&1.trees, fn t -> t.path == path end)),
+         true <- tree.url != nil and {tree.status, tree.reason} != {status, reason} do
+      repos =
+        Enum.map(repos, fn repo ->
+          trees =
+            Enum.map(repo.trees, fn
+              %{path: ^path} = t -> %{t | status: status, reason: reason}
+              t -> t
+            end)
+
+          %{repo | trees: trees}
+        end)
+
+      :persistent_term.put({__MODULE__, :current}, repos)
+      Phoenix.PubSub.broadcast(Merge.PubSub, topic(), {:servers, repos})
+    end
+
+    :ok
   end
 
   # /root/projects/dayofplenty (bare) → dayofplenty; /root/projects/merge/.git → merge

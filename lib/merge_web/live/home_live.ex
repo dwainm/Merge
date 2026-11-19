@@ -9,7 +9,7 @@ defmodule MergeWeb.HomeLive do
   # How long a successful push's result stays up. A failure stays until the next push.
   @success_ms 10_000
 
-  alias Merge.{AutoMerge, AutoPush, Checks, Drift, MergeRequest, Servers}
+  alias Merge.{AutoMerge, AutoPush, Checks, Drift, LiveStatus, MergeRequest, Servers}
   import MergeWeb.MergeRequestComponents
 
   # The queue's tabs; it also follows the merge requests for this page.
@@ -24,12 +24,14 @@ defmodule MergeWeb.HomeLive do
       Phoenix.PubSub.subscribe(Merge.PubSub, Servers.topic())
       Phoenix.PubSub.subscribe(Merge.PubSub, AutoPush.topic())
       Phoenix.PubSub.subscribe(Merge.PubSub, AutoMerge.topic())
+      Phoenix.PubSub.subscribe(Merge.PubSub, LiveStatus.topic())
       if Process.whereis(Merge.Watcher), do: Merge.Watcher.refresh()
+      LiveStatus.poke()
     end
 
     {:ok,
      socket
-     |> assign(page_title: "Merge requests", busy: nil)
+     |> assign(page_title: "Merge requests", busy: nil, live: LiveStatus.all())
      |> show_push(Drift.last_push())
      |> assign(:drift, Drift.current() || Drift.read())
      |> assign(:servers, Servers.current() || Servers.read())
@@ -55,6 +57,9 @@ defmodule MergeWeb.HomeLive do
     do: {:noreply, socket |> show_push(Drift.last_push()) |> load_auto_push()}
 
   def handle_info({:servers, servers}, socket), do: {:noreply, assign(socket, servers: servers)}
+
+  # What is true in each open merge request's work folder (Merge.LiveStatus).
+  def handle_info({:live, live}, socket), do: {:noreply, socket |> assign(live: live) |> load()}
 
   def handle_info(:hide_push, socket) do
     case socket.assigns.last_push do
@@ -226,6 +231,9 @@ defmodule MergeWeb.HomeLive do
 
     assign(socket,
       open: open,
+      verdicts:
+        Map.new(open, &{&1.branch, LiveStatus.verdict(&1, socket.assigns.live[&1.branch])}),
+      since_looked: Map.new(open, &{&1.branch, MergeRequest.since_looked(&1)}),
       done: done,
       pills: pills,
       branches: branches,
@@ -268,6 +276,8 @@ defmodule MergeWeb.HomeLive do
         :if={@open != []}
         id="merge-requests"
         merge_requests={@open}
+        verdicts={@verdicts}
+        since_looked={@since_looked}
         holds={@holds}
         queued={MapSet.new(@queue, & &1.branch)}
       />
@@ -683,6 +693,9 @@ defmodule MergeWeb.HomeLive do
 
   attr :queued, :any, default: nil, doc: "queued branches; nil hides the queue button"
 
+  attr :verdicts, :map, default: %{}, doc: "Merge.LiveStatus.verdict/2 of each open one"
+  attr :since_looked, :map, default: %{}, doc: "the commits since the reviewer last looked"
+
   defp mr_list(assigns) do
     ~H"""
     <ul
@@ -699,7 +712,12 @@ defmodule MergeWeb.HomeLive do
             <div class="flex shrink-0 items-center gap-1.5">
               <.merge_pill :if={not MergeRequest.done?(mr)} mr={mr} />
               <.checks_pill check={@pills[mr.branch]} link={false} />
-              <.status status={mr.status} merged={mr.merged} />
+              <.live_badge
+                :if={verdict = @verdicts[mr.branch]}
+                verdict={verdict}
+                id={"live-badge-#{mr.branch}"}
+              />
+              <.status :if={!@verdicts[mr.branch]} status={mr.status} merged={mr.merged} />
             </div>
           </div>
           <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-(--text-muted)">
@@ -710,7 +728,19 @@ defmodule MergeWeb.HomeLive do
             <span>by {mr.opened_by}</span>
             <span :if={mr.merged} class="font-mono">in {mr.merged.short}</span>
             <span :if={mr.done_at}>{ago(mr.done_at)}</span>
+            <span
+              :if={(new = @since_looked[mr.branch] || []) != []}
+              id={"since-looked-#{mr.branch}"}
+              class="font-medium text-(--info-text)"
+            >
+              {count(new, "new commit")} since you looked
+            </span>
           </div>
+          <.live_reasons
+            :if={verdict = @verdicts[mr.branch]}
+            verdict={verdict}
+            id={"live-reasons-#{mr.branch}"}
+          />
           <.auto_merge_line :if={mr.status == :approved} mr={mr} hold={@holds[mr.branch]} />
         </.link>
         <.queue_button
